@@ -9,26 +9,24 @@ const sendOverrides = (tabId, timezone, locale, lat, lon) => {
         timezoneId: timezone,
       },
       () => {
-        if (
-          chrome.runtime.lastError &&
-          chrome.runtime.lastError.message?.includes(
-            'Timezone override is already in effect'
-          )
-        ) {
-          // Timezone override is already active, ignore
+        if (chrome.runtime.lastError) {
+          // Timezone error or already in effect; ignore
         }
       }
     )
   }
 
-  if (lat || lon) {
+  if (lat != null && lon != null) {
     chrome.debugger.sendCommand(
       { tabId: tabId },
       'Emulation.setGeolocationOverride',
       {
-        latitude: lat,
-        longitude: lon,
+        latitude: Number(lat),
+        longitude: Number(lon),
         accuracy: 1,
+      },
+      () => {
+        if (chrome.runtime.lastError) {}
       }
     )
   }
@@ -39,6 +37,9 @@ const sendOverrides = (tabId, timezone, locale, lat, lon) => {
       'Emulation.setLocaleOverride',
       {
         locale,
+      },
+      () => {
+        if (chrome.runtime.lastError) {}
       }
     )
 
@@ -59,13 +60,31 @@ const sendOverrides = (tabId, timezone, locale, lat, lon) => {
       })
     }
 
+    const scriptSource = generateInjectionScript(locale, timezone)
+
     chrome.debugger.sendCommand({ tabId: tabId }, 'Page.enable', {}, () => {
       if (!chrome.runtime.lastError) {
         chrome.debugger.sendCommand(
           { tabId: tabId },
           'Page.addScriptToEvaluateOnNewDocument',
           {
-            source: generateInjectionScript(locale, timezone),
+            source: scriptSource,
+          }
+        )
+      }
+    })
+
+    // Also evaluate in the active document immediately for real-time live spoofing
+    chrome.debugger.sendCommand({ tabId: tabId }, 'Runtime.enable', {}, () => {
+      if (!chrome.runtime.lastError) {
+        chrome.debugger.sendCommand(
+          { tabId: tabId },
+          'Runtime.evaluate',
+          {
+            expression: scriptSource,
+            includeCommandLineAPI: false,
+            silent: true,
+            returnByValue: true,
           }
         )
       }
@@ -74,14 +93,10 @@ const sendOverrides = (tabId, timezone, locale, lat, lon) => {
 }
 
 const attachDebugger = (tabId, timezone, locale, lat, lon) => {
-  if (timezone || locale || lat || lon) {
+  if (timezone || locale || lat != null || lon != null) {
     chrome.debugger.attach({ tabId: tabId }, '1.3', () => {
       const err = chrome.runtime.lastError
-      if (!err) {
-        sendOverrides(tabId, timezone, locale, lat, lon)
-      } else if (
-        err.message?.includes('Another debugger is already attached')
-      ) {
+      if (!err || err.message?.includes('Another debugger is already attached')) {
         sendOverrides(tabId, timezone, locale, lat, lon)
       }
     })
@@ -95,11 +110,7 @@ const detachDebugger = () => {
         chrome.debugger.sendCommand(
           { tabId: tabs[tab].tabId },
           'Emulation.clearGeolocationOverride',
-          {
-            autoAttach: true,
-            waitForDebuggerOnStart: false,
-            flatten: true,
-          }
+          {}
         )
         chrome.debugger.detach({ tabId: tabs[tab].tabId })
       }
@@ -107,4 +118,41 @@ const detachDebugger = () => {
   })
 }
 
-export { attachDebugger, detachDebugger, sendOverrides }
+const updateAllTabsWithCurrentOverrides = async () => {
+  const storage = await chrome.storage.local.get([
+    'configuration',
+    'timezone',
+    'locale',
+    'lat',
+    'lon',
+  ])
+
+  if (storage.configuration === 'browserDefault') {
+    detachDebugger()
+    return
+  }
+
+  if (!storage.timezone && !storage.locale && storage.lat == null && storage.lon == null) {
+    return
+  }
+
+  chrome.debugger.getTargets((targets) => {
+    const attachedTabs = targets.filter((t) => t.attached && t.tabId)
+    attachedTabs.forEach((target) => {
+      sendOverrides(
+        target.tabId,
+        storage.timezone,
+        storage.locale,
+        storage.lat,
+        storage.lon
+      )
+    })
+  })
+}
+
+export {
+  attachDebugger,
+  detachDebugger,
+  sendOverrides,
+  updateAllTabsWithCurrentOverrides,
+}

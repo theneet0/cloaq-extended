@@ -31,6 +31,13 @@ jobs:
       - name: Run automated tests
         run: npm test
 
+      - name: Extract version from manifest.json
+        id: get_version
+        run: |
+          VERSION=$(node -p "require('./manifest.json').version")
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "TAG=v${VERSION}" >> $GITHUB_OUTPUT
+
       - name: Package extension as zip
         run: |
           cd build
@@ -40,23 +47,23 @@ jobs:
       - name: Release to GitHub
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.3.0
-          name: "Cloaq Extended v1.3.0"
+          tag_name: ${{ steps.get_version.outputs.TAG }}
+          name: "Cloaq Extended ${{ steps.get_version.outputs.TAG }}"
           body: |
-            ## 🚀 Cloaq Extended v1.3.0
+            ## 🚀 Cloaq Extended ${{ steps.get_version.outputs.TAG }}
 
             This release was automatically built, tested, and packaged by GitHub Actions.
 
             ### ✨ What's New:
-            * **🔄 Automatic VPN IP Tracking (حل مشکل تغییر لوکیشن):**
-              * Extension automatically detects VPN IP changes and updates Timezone, Geolocation, and Locale in the background without requiring manual toggling.
+            * **🔄 Real-Time Automatic VPN IP Tracking (حل مشکل تغییر لوکیشن):**
+              * Extension automatically detects VPN IP changes and updates Timezone, Geolocation, and Locale across active and future tabs in the background without requiring manual toggling.
             * **🌐 Header & Browser Language Spoofing (سپوف خودکار زبان مرورگر):**
-              * Overrides the HTTP `Accept-Language` header for all requests matching the IP location.
-              * Overrides `navigator.language` and `navigator.languages` to prevent detection.
-            * **⌨️ Keyboard Layout Spoofing (سپوف لایوت کیبورد):**
-              * Intercepts `navigator.keyboard.getLayoutMap()` to spoof physical keyboard layout according to IP country (prevents Persian/foreign keyboard leakage).
-            * **🛡️ Undetectable Debugger Injections:**
-              * Multi-layer CDP overrides for deep consistency.
+              * Overrides the HTTP `Accept-Language` header for all requests matching the IP location using `declarativeNetRequest` and CDP.
+              * Overrides `navigator.language` and `navigator.languages` via stealth accessor properties on `Navigator.prototype` to prevent anti-bot detection.
+            * **⌨️ Hardware Keyboard Layout Spoofing (سپوف لایوت کیبورد):**
+              * Intercepts `navigator.keyboard.getLayoutMap()` to spoof physical keyboard layout according to IP country (US, UK, German, French, Turkish, Spanish, Italian, Russian, Persian) with undetectable WebIDL native masking.
+            * **🛡️ Stealth & Fingerprinting Protection:**
+              * Prototype descriptors and native `Function.prototype.toString` masks protect against CreepJS and anti-bot checks.
 
             ---
 

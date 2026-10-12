@@ -1,11 +1,11 @@
 import countryLocales from './countryLocales.js'
 import { getAcceptLanguageHeader } from './keyboardLayouts.js'
-import { detachDebugger } from './debugger.js'
+import { updateAllTabsWithCurrentOverrides } from './debugger.js'
 
 export const RULE_ID_ACCEPT_LANGUAGE = 1001
 
 export const updateAcceptLanguageRule = async (locale) => {
-  if (!chrome.declarativeNetRequest) return
+  if (!chrome?.declarativeNetRequest) return
 
   if (!locale) {
     try {
@@ -74,7 +74,8 @@ export const fetchCurrentIpGeo = async () => {
       const response = await fetch(url, { signal: controller.signal })
       clearTimeout(timer)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      return await response.json()
+      const text = await response.text()
+      return JSON.parse(text)
     } catch (err) {
       clearTimeout(timer)
       throw err
@@ -115,7 +116,24 @@ export const fetchCurrentIpGeo = async () => {
     // continue to fallback
   }
 
-  // Provider 3: ipapi.co (HTTPS fallback)
+  // Provider 3: freeipapi.com (HTTPS fallback, clean JSON, no auth)
+  try {
+    const data = await fetchWithTimeout('https://freeipapi.com/api/json')
+    if (data && data.ipAddress && data.countryCode) {
+      const tz = Array.isArray(data.timeZones) && data.timeZones.length > 0 ? data.timeZones[0] : null
+      return {
+        ip: data.ipAddress,
+        countryCode: data.countryCode,
+        timezone: tz,
+        lat: data.latitude,
+        lon: data.longitude,
+      }
+    }
+  } catch (e) {
+    // continue to fallback
+  }
+
+  // Provider 4: ipapi.co (HTTPS fallback)
   try {
     const data = await fetchWithTimeout('https://ipapi.co/json/')
     if (data && data.ip && data.country_code) {
@@ -157,7 +175,7 @@ export const checkAndUpdateIpIfNeeded = async (force = false) => {
     }
 
     const now = Date.now()
-    if (!force && storage.lastCheckTime && now - storage.lastCheckTime < 10000) {
+    if (!force && storage.lastCheckTime && now - storage.lastCheckTime < 15000) {
       return { changed: false, ip: storage.lastIp }
     }
 
@@ -193,7 +211,7 @@ export const checkAndUpdateIpIfNeeded = async (force = false) => {
       })
 
       await updateAcceptLanguageRule(locale)
-      detachDebugger()
+      await updateAllTabsWithCurrentOverrides()
 
       return {
         changed: true,

@@ -169,6 +169,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
         setInputState(true)
         setInputs(storage.timezone, storage.locale, storage.lat, storage.lon)
         updateIpBadge(storage.lastIp, storage.lastCountry, false)
+      } else if (storage.configuration === 'browserDefault') {
+        setInputState(false)
+        clearInputs()
+        updateIpBadge(null, null, false)
+      } else {
+        setInputState(false)
+        setInputs(storage.timezone, storage.locale, storage.lat, storage.lon)
+        updateIpBadge(null, null, false)
       }
     }
   )

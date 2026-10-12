@@ -1,4 +1,9 @@
-import { attachDebugger, detachDebugger, sendOverrides } from './debugger.js'
+import {
+  attachDebugger,
+  detachDebugger,
+  sendOverrides,
+  updateAllTabsWithCurrentOverrides,
+} from './debugger.js'
 import {
   checkAndUpdateIpIfNeeded,
   updateAcceptLanguageRule,
@@ -53,7 +58,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     return
   }
 
-  let storage = await chrome.storage.local.get([
+  const storage = await chrome.storage.local.get([
     'configuration',
     'timezone',
     'locale',
@@ -64,21 +69,8 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
   if (storage.configuration === 'browserDefault') return
 
-  if (storage.configuration === 'ipAddress') {
-    const now = Date.now()
-    if (!storage.lastCheckTime || now - storage.lastCheckTime > 10000) {
-      await checkAndUpdateIpIfNeeded(false)
-      storage = await chrome.storage.local.get([
-        'configuration',
-        'timezone',
-        'locale',
-        'lat',
-        'lon',
-      ])
-    }
-  }
-
-  if (storage.timezone || storage.locale || storage.lat || storage.lon) {
+  // 1. Immediately attach debugger and apply current overrides without blocking navigation
+  if (storage.timezone || storage.locale || storage.lat != null || storage.lon != null) {
     chrome.debugger.getTargets((tabs) => {
       const currentTab = tabs.find((obj) => obj.tabId === details.tabId)
       if (!currentTab?.attached) {
@@ -100,6 +92,14 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
       }
     })
   }
+
+  // 2. Trigger asynchronous background IP check (non-blocking)
+  if (storage.configuration === 'ipAddress') {
+    const now = Date.now()
+    if (!storage.lastCheckTime || now - storage.lastCheckTime > 15000) {
+      checkAndUpdateIpIfNeeded(false)
+    }
+  }
 })
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -118,12 +118,15 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
           updateAcceptLanguageRule(storage.locale)
         }
       })
-      detachDebugger()
+      updateAllTabsWithCurrentOverrides()
     }
-  } else if (changes.locale) {
-    chrome.storage.local.get(['configuration'], (storage) => {
-      if (storage.configuration !== 'browserDefault') {
-        updateAcceptLanguageRule(changes.locale.newValue)
+  } else if (changes.locale || changes.timezone || changes.lat || changes.lon) {
+    chrome.storage.local.get(['configuration', 'locale'], (storage) => {
+      if (storage.configuration && storage.configuration !== 'browserDefault') {
+        if (changes.locale) {
+          updateAcceptLanguageRule(changes.locale.newValue)
+        }
+        updateAllTabsWithCurrentOverrides()
       }
     })
   }
