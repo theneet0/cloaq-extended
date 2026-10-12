@@ -18,28 +18,32 @@ Modern browser fingerprinting and bot detection suites (e.g., CreepJS, Fingerpri
 * Discrepancies between browser locale and outbound HTTP `Accept-Language` headers.
 * Physical keyboard layout enumeration via the W3C Keyboard Map API (`navigator.keyboard.getLayoutMap()`).
 
-Cloaq Extended mitigates these vectors through a hybrid architecture combining the Chrome DevTools Protocol (`chrome.debugger`), Declarative Net Request rules, and stealth WebIDL prototype patching.
+Cloaq Extended mitigates these vectors through a hybrid zero-latency architecture combining pre-registered `MAIN`-world `document_start` shared-memory scripts (`chrome.scripting`), the Chrome DevTools Protocol (`chrome.debugger`), Declarative Net Request rules, and stealth WebIDL prototype patching.
 
 ---
 
 ## Core Features
 
-### 1. Automated VPN IP Tracking & Real-Time Sync
-* Continuously monitors network gateway changes via periodic background alarms and navigation hooks.
-* Multi-provider GeoIP resolution pipeline (`ipwho.is`, `ip-api.com`, `freeipapi.com`) with automated fallback and network timeout guards.
-* Automatically updates time zone, geolocation, and locale across active and new tabs whenever the VPN connection switches—eliminating the need to manually toggle settings.
+### 1. Zero-Latency New-Tab Pre-Shield (`document_start` Shared-Memory Engine)
+* Eliminates the first-load timezone leak on newly opened tabs (`chrome://newtab` transitions) by pre-registering a binary bit-encoded `MAIN`-world `document_start` script via `chrome.scripting.registerContentScripts`.
+* Executes synchronously at `t = 0.00ms` from renderer shared memory—before any inline `<head>` script or anti-bot probe can run—spoofing `Intl.DateTimeFormat`, `Date` constructor & `Date.prototype` (`getTimezoneOffset`, `toString`, `toTimeString`, `toDateString`, `getHours`, etc.), `Navigator.prototype`, `KeyboardLayoutMap`, `Geolocation`, and dynamically created `about:blank` / `srcdoc` `<iframe>` contexts.
 
-### 2. Browser-Level CDP Overrides
+### 2. Automated VPN IP Tracking & Real-Time Sync
+* Continuously monitors network gateway changes via periodic background alarms and zero-wait in-memory cached navigation hooks (`onBeforeNavigate`, `onCommitted`, and `tabs.onUpdated`).
+* Concurrent multi-provider GeoIP racing pipeline (`ipwho.is`, `ip-api.com`, `freeipapi.com`, `ipapi.co`) with `Promise.any` fast resolution and automatic request cancellation.
+* Automatically updates time zone, geolocation, and locale across active and new tabs whenever the VPN connection switches—eliminating the need to manually toggle settings or refresh newly opened tabs.
+
+### 3. Browser-Level CDP Overrides
 * Operates via the Chrome DevTools Protocol (`chrome.debugger`) to enforce overrides at the browser engine level:
-  * `Emulation.setTimezoneOverride`: Synchronizes IANA time zone across all execution contexts.
+  * `Emulation.setTimezoneOverride`: Synchronizes IANA time zone across all execution contexts (with automatic clear-and-reapply when switching time zones on attached targets).
   * `Emulation.setGeolocationOverride`: Enforces GPS coordinates and accuracy values.
   * `Emulation.setLocaleOverride`: Configures native formatting and `Intl` APIs across frames and Web Workers.
 
-### 3. Network Header Interception
+### 4. Network Header Interception
 * Intercepts and rewrites outbound HTTP `Accept-Language` headers using `declarativeNetRequest` rules and CDP `Network.setExtraHTTPHeaders`.
 * Ensures network requests mirror the spoofed locale with correct language tags and quality values (e.g., `de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7`).
 
-### 4. Stealth Keyboard Layout Emulation
+### 5. Stealth Keyboard Layout Emulation
 * Intercepts `navigator.keyboard.getLayoutMap()` to return an authentic `KeyboardLayoutMap` conforming to the physical keyboard standards of the target country.
 * Supported layout profiles:
   * **German (QWERTZ)** (`de-DE`, `de-AT`, `de-CH`)
@@ -49,6 +53,7 @@ Cloaq Extended mitigates these vectors through a hybrid architecture combining t
   * **Spanish** (`es-ES`)
   * **Italian** (`it-IT`)
   * **Russian (JCUKEN)** (`ru-RU`, `uk-UA`)
+  * **Persian (FA)** (`fa-IR`)
   * **United States (QWERTY)** (`en-US`)
 * Designed with native prototype masking: methods are bound to `KeyboardLayoutMap.prototype`, instances contain zero enumerable own properties, and `Function.prototype.toString` calls return `[native code]` to bypass anti-tampering heuristics.
 
@@ -87,16 +92,16 @@ Cloaq Extended mitigates these vectors through a hybrid architecture combining t
    npm install
    ```
 
-3. Run the automated test suite:
-   ```bash
-   npm test
-   ```
-
-4. Compile Tailwind CSS and bundle assets:
+3. Compile Tailwind CSS and bundle assets:
    ```bash
    npm run build
    ```
    *The distributable extension files are packaged into the `./build/` directory.*
+
+4. Run the automated test suite:
+   ```bash
+   npm test
+   ```
 
 5. Open `chrome://extensions/`, enable **Developer mode**, click **Load unpacked**, and select the `./build/` directory.
 
@@ -143,12 +148,13 @@ google-chrome --silent-debugger-extension-api
 
 | Permission | Justification |
 | :--- | :--- |
+| `scripting` | Registers zero-latency `MAIN`-world `document_start` shared-memory scripts across all frames and new tabs prior to page script execution. |
 | `debugger` | Required to invoke Chrome DevTools Protocol domains (`Emulation`, `Page`, `Network`). |
 | `declarativeNetRequest` | Modifies outbound `Accept-Language` HTTP request headers at the network stack. |
 | `alarms` | Schedules lightweight periodic background verification of network IP transitions. |
 | `webNavigation` | Detects document navigation lifecycle events to apply overrides prior to DOM script execution. |
 | `storage` | Persists user preferences and cached geolocation metadata locally. |
-| `host_permissions: ["<all_urls>"]` | Permits Declarative Net Request rules across all visited origins and allows background service workers to query GeoIP APIs. |
+| `host_permissions: ["<all_urls>"]` | Permits Declarative Net Request rules and `document_start` scripts across all visited origins and allows background service workers to query GeoIP APIs. |
 
 ---
 

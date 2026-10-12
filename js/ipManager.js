@@ -1,6 +1,9 @@
 import countryLocales from './countryLocales.js'
 import { getAcceptLanguageHeader } from './keyboardLayouts.js'
-import { updateAllTabsWithCurrentOverrides } from './debugger.js'
+import {
+  updateAllTabsWithCurrentOverrides,
+  syncContentScriptShield,
+} from './debugger.js'
 
 export const RULE_ID_ACCEPT_LANGUAGE = 1001
 
@@ -65,27 +68,51 @@ export const updateAcceptLanguageRule = async (locale) => {
 }
 
 export const fetchCurrentIpGeo = async () => {
-  const timeoutMs = 3500
+  const timeoutMs = 2800
 
-  const fetchWithTimeout = async (url) => {
+  const fetchJson = async (url, externalSignal) => {
     const controller = new AbortController()
+    const onAbort = () => controller.abort()
+    if (externalSignal) {
+      if (externalSignal.aborted) throw new Error('Aborted')
+      externalSignal.addEventListener('abort', onAbort, { once: true })
+    }
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      const response = await fetch(url, { signal: controller.signal })
+      const response = await fetch(url, {
+        signal: controller.signal,
+        cache: 'no-store',
+      })
       clearTimeout(timer)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const text = await response.text()
       return JSON.parse(text)
-    } catch (err) {
+    } finally {
       clearTimeout(timer)
-      throw err
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', onAbort)
+      }
     }
   }
 
-  // Provider 1: ipwho.is (HTTPS, fast, rich data)
-  try {
-    const data = await fetchWithTimeout('https://ipwho.is/')
-    if (data && data.success && data.ip) {
+  const raceTier = async (tierRunners) => {
+    const controllers = tierRunners.map(() => new AbortController())
+    try {
+      return await Promise.any(
+        tierRunners.map((runner, idx) => runner(controllers[idx].signal))
+      )
+    } finally {
+      controllers.forEach((c) => {
+        try {
+          c.abort()
+        } catch (e) {}
+      })
+    }
+  }
+
+  const pIpWhoIs = async (signal) => {
+    const data = await fetchJson('https://ipwho.is/', signal)
+    if (data && data.success && data.ip && data.country_code) {
       return {
         ip: data.ip,
         countryCode: data.country_code,
@@ -94,16 +121,15 @@ export const fetchCurrentIpGeo = async () => {
         lon: data.longitude,
       }
     }
-  } catch (e) {
-    // continue to fallback
+    throw new Error('Invalid ipwho.is payload')
   }
 
-  // Provider 2: ip-api.com (HTTP fallback)
-  try {
-    const data = await fetchWithTimeout(
-      'http://ip-api.com/json/?fields=status,message,countryCode,lat,lon,timezone,query'
+  const pIpApiCom = async (signal) => {
+    const data = await fetchJson(
+      'http://ip-api.com/json/?fields=status,message,countryCode,lat,lon,timezone,query',
+      signal
     )
-    if (data && data.status === 'success' && data.query) {
+    if (data && data.status === 'success' && data.query && data.countryCode) {
       return {
         ip: data.query,
         countryCode: data.countryCode,
@@ -112,15 +138,16 @@ export const fetchCurrentIpGeo = async () => {
         lon: data.lon,
       }
     }
-  } catch (e) {
-    // continue to fallback
+    throw new Error('Invalid ip-api.com payload')
   }
 
-  // Provider 3: freeipapi.com (HTTPS fallback, clean JSON, no auth)
-  try {
-    const data = await fetchWithTimeout('https://freeipapi.com/api/json')
+  const pFreeIpApi = async (signal) => {
+    const data = await fetchJson('https://freeipapi.com/api/json', signal)
     if (data && data.ipAddress && data.countryCode) {
-      const tz = Array.isArray(data.timeZones) && data.timeZones.length > 0 ? data.timeZones[0] : null
+      const tz =
+        Array.isArray(data.timeZones) && data.timeZones.length > 0
+          ? data.timeZones[0]
+          : null
       return {
         ip: data.ipAddress,
         countryCode: data.countryCode,
@@ -129,13 +156,11 @@ export const fetchCurrentIpGeo = async () => {
         lon: data.longitude,
       }
     }
-  } catch (e) {
-    // continue to fallback
+    throw new Error('Invalid freeipapi payload')
   }
 
-  // Provider 4: ipapi.co (HTTPS fallback)
-  try {
-    const data = await fetchWithTimeout('https://ipapi.co/json/')
+  const pIpApiCo = async (signal) => {
+    const data = await fetchJson('https://ipapi.co/json/', signal)
     if (data && data.ip && data.country_code) {
       return {
         ip: data.ip,
@@ -145,91 +170,150 @@ export const fetchCurrentIpGeo = async () => {
         lon: data.longitude,
       }
     }
-  } catch (e) {
-    // all failed
+    throw new Error('Invalid ipapi.co payload')
   }
 
-  return null
+  // Tier 1: Fast concurrent race between primary HTTPS & low-latency endpoints
+  try {
+    return await raceTier([pIpWhoIs, pIpApiCom])
+  } catch (e) {
+    // Continue to Tier 2 fallback race
+  }
+
+  // Tier 2: Concurrent fallback race
+  try {
+    return await raceTier([pFreeIpApi, pIpApiCo])
+  } catch (e) {
+    return null
+  }
 }
 
-let isChecking = false
+let activeCheckPromise = null
 
 export const checkAndUpdateIpIfNeeded = async (force = false) => {
-  if (isChecking) return null
-  isChecking = true
-
-  try {
-    const storage = await chrome.storage.local.get([
-      'configuration',
-      'lastIp',
-      'lastCountry',
-      'lastCheckTime',
-      'timezone',
-      'locale',
-      'lat',
-      'lon',
-    ])
-
-    if (storage.configuration !== 'ipAddress') {
-      return null
-    }
-
-    const now = Date.now()
-    if (!force && storage.lastCheckTime && now - storage.lastCheckTime < 15000) {
-      return { changed: false, ip: storage.lastIp }
-    }
-
-    const geo = await fetchCurrentIpGeo()
-    if (!geo) {
-      return {
-        changed: false,
-        ip: storage.lastIp,
-        error: 'Network error or IP APIs unavailable',
-      }
-    }
-
-    const ipChanged =
-      force ||
-      geo.ip !== storage.lastIp ||
-      !storage.timezone ||
-      !storage.locale
-
-    if (ipChanged) {
-      const locale = countryLocales[geo.countryCode] || 'en-US'
-      const timezone = geo.timezone || 'UTC'
-      const lat = geo.lat
-      const lon = geo.lon
-
-      await chrome.storage.local.set({
-        lastIp: geo.ip,
-        lastCountry: geo.countryCode,
-        lastCheckTime: Date.now(),
-        timezone,
-        locale,
-        lat,
-        lon,
-      })
-
-      await updateAcceptLanguageRule(locale)
-      await updateAllTabsWithCurrentOverrides()
-
-      return {
-        changed: true,
-        ip: geo.ip,
-        country: geo.countryCode,
-        timezone,
-        locale,
-        lat,
-        lon,
-      }
-    } else {
-      await chrome.storage.local.set({ lastCheckTime: Date.now() })
-      return { changed: false, ip: geo.ip, country: geo.countryCode }
-    }
-  } catch (err) {
-    console.error('Error in checkAndUpdateIpIfNeeded:', err)
-    return null
-  } finally {
-    isChecking = false
+  if (activeCheckPromise) {
+    return activeCheckPromise
   }
+
+  activeCheckPromise = (async () => {
+    try {
+      const storage = await chrome.storage.local.get([
+        'configuration',
+        'lastIp',
+        'lastCountry',
+        'lastCheckTime',
+        'timezone',
+        'locale',
+        'lat',
+        'lon',
+      ])
+
+      if (storage.configuration !== 'ipAddress') {
+        return null
+      }
+
+      const now = Date.now()
+      if (
+        !force &&
+        storage.lastCheckTime &&
+        now - storage.lastCheckTime < 15000 &&
+        storage.timezone &&
+        storage.locale
+      ) {
+        return {
+          changed: false,
+          ip: storage.lastIp,
+          country: storage.lastCountry,
+          timezone: storage.timezone,
+          locale: storage.locale,
+          lat: storage.lat,
+          lon: storage.lon,
+        }
+      }
+
+      const geo = await fetchCurrentIpGeo()
+      if (!geo) {
+        if (storage.timezone || storage.locale) {
+          await syncContentScriptShield(
+            storage.timezone,
+            storage.locale,
+            storage.lat,
+            storage.lon
+          )
+        }
+        return {
+          changed: false,
+          ip: storage.lastIp,
+          country: storage.lastCountry,
+          timezone: storage.timezone,
+          locale: storage.locale,
+          lat: storage.lat,
+          lon: storage.lon,
+          error: 'Network error or IP APIs unavailable',
+        }
+      }
+
+      const ipChanged =
+        force ||
+        geo.ip !== storage.lastIp ||
+        !storage.timezone ||
+        !storage.locale
+
+      if (ipChanged) {
+        const locale = countryLocales[geo.countryCode] || 'en-US'
+        const timezone = geo.timezone || 'UTC'
+        const lat = geo.lat
+        const lon = geo.lon
+
+        await chrome.storage.local.set({
+          lastIp: geo.ip,
+          lastCountry: geo.countryCode,
+          lastCheckTime: Date.now(),
+          timezone,
+          locale,
+          lat,
+          lon,
+        })
+
+        await Promise.all([
+          updateAcceptLanguageRule(locale),
+          updateAllTabsWithCurrentOverrides(),
+        ])
+
+        return {
+          changed: true,
+          ip: geo.ip,
+          country: geo.countryCode,
+          timezone,
+          locale,
+          lat,
+          lon,
+        }
+      } else {
+        await chrome.storage.local.set({ lastCheckTime: Date.now() })
+        await syncContentScriptShield(
+          storage.timezone,
+          storage.locale,
+          storage.lat,
+          storage.lon
+        )
+        return {
+          changed: false,
+          ip: geo.ip,
+          country: geo.countryCode,
+          timezone: storage.timezone,
+          locale: storage.locale,
+          lat: storage.lat,
+          lon: storage.lon,
+        }
+      }
+    } catch (err) {
+      console.error('Error in checkAndUpdateIpIfNeeded:', err)
+      return null
+    } finally {
+      activeCheckPromise = null
+    }
+  })()
+
+  return activeCheckPromise
 }
