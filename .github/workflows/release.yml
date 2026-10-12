@@ -1,0 +1,82 @@
+name: Build and Release Extension
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run automated tests
+        run: npm test
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Package extension as zip
+        run: |
+          cd build
+          zip -r ../cloaq-extended.zip ./*
+          cd ..
+
+      - name: Release to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.3.0
+          name: "Cloaq Extended v1.3.0"
+          body: |
+            ## 🚀 Cloaq Extended v1.3.0
+
+            This release was automatically built, tested, and packaged by GitHub Actions.
+
+            ### ✨ What's New:
+            * **🔄 Automatic VPN IP Tracking (حل مشکل تغییر لوکیشن):**
+              * Extension automatically detects VPN IP changes and updates Timezone, Geolocation, and Locale in the background without requiring manual toggling.
+            * **🌐 Header & Browser Language Spoofing (سپوف خودکار زبان مرورگر):**
+              * Overrides the HTTP `Accept-Language` header for all requests matching the IP location.
+              * Overrides `navigator.language` and `navigator.languages` to prevent detection.
+            * **⌨️ Keyboard Layout Spoofing (سپوف لایوت کیبورد):**
+              * Intercepts `navigator.keyboard.getLayoutMap()` to spoof physical keyboard layout according to IP country (prevents Persian/foreign keyboard leakage).
+            * **🛡️ Undetectable Debugger Injections:**
+              * Multi-layer CDP overrides for deep consistency.
+
+            ---
+
+            ### 📦 Manual Installation Guide (راهنمای نصب دستی)
+
+            #### English:
+            1. Download `cloaq-extended.zip` from Assets below.
+            2. Extract the downloaded zip file into a folder on your computer.
+            3. Open Google Chrome and navigate to `chrome://extensions/`.
+            4. Enable **Developer mode** toggle in the top-right corner.
+            5. Click **Load unpacked** and select the extracted folder.
+            6. Pin the Cloaq extension and select **Match IP Address** in Configuration!
+
+            #### فارسی:
+            ۱. فایل فشرده `cloaq-extended.zip` را از بخش Assets در زیر دانلود کنید.
+            ۲. فایل را از حالت زیپ استخراج (Extract) کنید.
+            ۳. در مرورگر گوگل کروم به آدرس `chrome://extensions/` بروید.
+            ۴. گزینه **Developer mode (حالت توسعه‌دهنده)** در گوشه بالا سمت راست را فعال کنید.
+            ۵. بر روی دکمه **Load unpacked** کلیک کرده و پوشه استخراج‌شده را انتخاب کنید.
+            ۶. آیکون اکستنشن را پین کرده و در بخش Configuration گزینه **Match IP Address** را انتخاب نمایید.
+          files: cloaq-extended.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

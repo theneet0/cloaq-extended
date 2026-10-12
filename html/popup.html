@@ -21,7 +21,7 @@
     </div>
   </header>
 
-  <main class="flex flex-col gap-5 p-5">
+  <main class="flex flex-col gap-4 p-5">
     <div>
       <h2 class="section-title">Configuration</h2>
       <select name="configuration"
@@ -32,6 +32,16 @@
         <optgroup label="Locations" id="locationsOptGroup">
         </optgroup>
       </select>
+    </div>
+
+    <div id="ipStatusContainer" class="hidden p-2.5 bg-gray-50 border border-borderLight rounded flex items-center justify-between text-xs">
+      <div class="flex items-center gap-2 overflow-hidden">
+        <span id="ipStatusDot" class="inline-block w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
+        <span id="ipStatusText" class="truncate font-medium text-offBlack">Matching IP...</span>
+      </div>
+      <button id="refreshIpBtn" type="button" class="text-offBlack hover:underline text-xs shrink-0 font-medium ml-2 cursor-pointer" title="Check IP now">
+        Refresh
+      </button>
     </div>
 
     <div>
@@ -54,22 +64,13 @@
         <input type="number" name="longitude" class="input">
       </div>
     </div>
-    <!-- 
-    <div class="flex flex-col gap-2">
-      <div class="flex items-center">
-        <input type="checkbox" id="debuggerApiMode" name="debuggerApiMode"
-          class="input-checkbox h-4 w-4 cursor-pointer">
-        <label for="debuggerApiMode" class="cursor-pointer pl-2.5">Debugger API Mode</label>
-      </div>
-      <p class="text-xs text-lightGrey">More effective & stealthy spoofing, but displays a notification bar.</p>
-    </div> -->
   </main>
 
   <footer class="flex justify-between items-center px-5 py-4 border-t border-borderLight">
     <a href="https://chromewebstore.google.com/detail/fcalilbnpkfikdppppppchmkdipibalb/reviews" target="_blank"
       class="footer-link">Rate Us</a>
     <a href="mailto:cloqextension@proton.me" target="_blank" class="footer-link">Contact</a>
-    <a href="https://github.com/www1z4rd/cloaq" target="_blank" class="footer-link">Github</a>
+    <a href="https://github.com/theneet0/cloaq-extended" target="_blank" class="footer-link">Github</a>
     <div class="text-lightGrey" id="extensionVersion"></div>
   </footer>
   <script src="../js/popup.js" type="module"></script>

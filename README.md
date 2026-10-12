@@ -1,62 +1,97 @@
-# Cloaq Extension
+# Cloaq Extended 🛡️
 
-**Chrome Download:** https://chromewebstore.google.com/detail/fcalilbnpkfikdppppppchmkdipibalb
+**Cloaq Extended** یک اکستنشن پیشرفته برای گوگل کروم (Chromium) است که اطلاعات منطقه زمانی (Time Zone)، موقعیت مکانی (Geolocation)، زبان مرورگر (Locale & Languages)، هدرهای شبکه (`Accept-Language`) و لایوت فیزیکی کیبورد (`navigator.keyboard`) را دقیقاً مطابق با لوکیشن و آی‌پی وی‌پی‌ان (VPN) شما جعل (Spoof) می‌کند تا از شناسایی هویت، زبان واقعی و اثر انگشت مرورگر (Fingerprinting) توسط وب‌سایت‌ها جلوگیری نماید.
 
-Cloaq is a browser extension that spoofs your time zone, geolocation, and locale to any location you choose. It’s useful for testing websites in different regions, bypassing geo-restrictions, or matching your location data to your VPN IP address.
+---
 
-## How Cloaq Works
+## ✨ ویژگی‌های جدید در نسخه Extended (نسخه ارتقایافته)
 
-Cloaq uses the chrome.debugger API to change data directly at the browser level, making it effective across all frames and web workers, unlike other extensions that rely on less reliable script injections. This approach ensures data modifications are undetectable and work consistently, even during the initial page load.
+1. **🔄 تطبیق خودکار آی‌پی در پس‌زمینه (Automatic VPN IP Sync):**
+   - دیگر نیازی به خاموش و روشن کردن دستی گزینه «Match IP Address» نیست!
+   - با تغییر لوکیشن یا تعویض سرور وی‌پی‌ان، اکستنشن به صورت بلادرنگ و خودکار آی‌پی جدید را شناسایی کرده و مختصات، تایم‌زون، زبان و کیبورد را بدون نیاز به دخالت کاربر به‌روزرسانی می‌کند.
+   - دارای چندین ارائه‌دهنده پشتیبان (Fallback) جهت اطمینان از عملکرد دائمی و بدون وقفه در هنگام قطعی و وصلی اینترنت یا VPN.
 
-## IP Address
+2. **🌐 جعل کامل زبان مرورگر و هدرهای شبکه (Language & Header Spoofing):**
+   - اصلاح هدر درخواست‌های وب `Accept-Language` در لایه شبکه با استفاده از `declarativeNetRequest` و CDP.
+   - جعل متغیرهای جاوااسکریپت `navigator.language` و `navigator.languages` برای جلوگیری از لو رفتن زبان‌های سیستم‌عامل.
+   - همگام‌سازی کامل با توابع `Intl` مرورگر.
 
-Cloaq does not change your IP address. To change your IP address you will need a VPN or proxy.
+3. **⌨️ جعل لایوت کیبورد سخت‌افزاری (Keyboard Layout Spoofing):**
+   - وب‌سایت‌های آنتی‌بات و فینگرپرینتینگ (مانند CreepJS و Cloudflare) از طریق متد `navigator.keyboard.getLayoutMap()` لایوت فیزیکی کیبورد شما (مثلاً چیدمان فارسی یا غیرمنطبق) را شناسایی می‌کردند.
+   - نسخه Extended این متد را به صورت نامحسوس رهگیری کرده و چیدمان متناظر با کشور آی‌پی شما (مانند QWERTY، QWERTZ آلمان، AZERTY فرانسه، ترکی استانبولی و...) را به عنوان یک آبجکت معتبر `KeyboardLayoutMap` شبیه‌سازی می‌کند.
 
-## Hide Debugging Notification Bar
+4. **🚀 بیلد و ریلیز خودکار توسط گیت‌هاب (Automated CI/CD Release):**
+   - تمام نسخه‌ها به صورت خودکار توسط GitHub Actions بیلد، تست و به عنوان یک پکیج آماده نصب زیپ در بخش Releases منتشر می‌شوند.
 
-While the extension is on, a notification bar becomes visible. Hiding the bar can be done by using the --silent-debugger-extension-api flag.
+---
 
-Instructions on how to run chrome with flags:
+## 📥 آموزش نصب دستی در گوگل کروم (Manual Installation Guide)
 
-https://www.chromium.org/developers/how-tos/run-chromium-with-flags/
+### روش اول: نصب نسخه آماده بیلد شده توسط گیت‌هاب (پیشنهادی)
 
-## Permission Justification
+نسخه‌های نهایی این اکستنشن مستقیماً توسط گیت‌هاب بیلد شده و در صفحه ریلیزهای همین ریپازیتوری قرار دارند:
 
-Chrome permissions define the specific browser capabilities and user data that an extension can access.
+1. به بخش **[Releases](https://github.com/theneet0/cloaq-extended/releases)** در گیت‌هاب بروید.
+2. از زیر بخش **Assets** آخرین نسخه (مانند `v1.3.0`)، فایل فشرده `cloaq-extended.zip` را دانلود کنید.
+3. فایل دانلود شده را در یک پوشه دلخواه در سیستم خود استخراج (Extract / Unzip) کنید.
+4. مرورگر گوگل کروم (یا هر مرورگر بر پایه کرومیوم مانند Edge، Brave و...) را باز کنید و وارد آدرس زیر شوید:
+   ```text
+   chrome://extensions/
+   ```
+5. از گوشه بالا سمت راست صفحه، کلید **Developer mode (حالت توسعه‌دهنده)** را فعال کنید.
+6. روی دکمه **Load unpacked (بارگذاری بسته بازنشده)** در بالای صفحه کلیک کنید.
+7. پوشه‌ای که فایل‌های اکستنشن را درون آن استخراج کرده بودید انتخاب نمایید.
+8. اکستنشن نصب شده و آیکون آن به نوار افزونه‌های مرورگر اضافه می‌شود.
+9. اکستنشن را پین (Pin) کرده، آن را باز کنید و در بخش **Configuration** گزینه **Match IP Address** را انتخاب کنید. اکنون با هر بار تغییر لوکیشن VPN، تنظیمات به طور خودکار تطبیق داده می‌شوند!
 
-**debugger:** Enables the extension to attach to tabs and emulate user settings such as location, time zone, and locale.
+---
 
-**webNavigation:** Enables the extension to attach the debugger to pages and monitor page transitions.
+### روش دوم: بیلد محلی از طریق سورس کد (Development Build)
 
-**storage:** Enables the extension to store and retrieve settings and preferences.
+اگر می‌خواهید سورس کد را به صورت محلی توسعه داده یا خودتان آن را بیلد کنید:
 
-## Screenshot
+1. ریپازیتوری را کلون کنید:
+   ```bash
+   git clone https://github.com/theneet0/cloaq-extended.git
+   cd cloaq-extended
+   ```
+2. پکیج‌ها را نصب کنید:
+   ```bash
+   npm install
+   ```
+3. تست‌های خودکار را اجرا کنید:
+   ```bash
+   npm test
+   ```
+4. اکستنشن را بیلد کنید:
+   ```bash
+   npm run build
+   ```
+   *فایل‌های نهایی قابل بارگذاری درون پوشه `build/` ایجاد خواهند شد.*
+5. در صفحه `chrome://extensions/` گزینه **Load unpacked** را بزنید و پوشه `build` را انتخاب کنید.
 
-<img src="https://raw.githubusercontent.com/www1z4rd/cloaq/refs/heads/main/promo/screenshot_2.png" alt="Screenshot" />
+---
 
-## Development
+## 🔔 مخفی‌سازی نوار اعلان دیباگر (Hide Notification Bar)
 
-Cloaq is built using JavaScript and Tailwind CSS.
+از آنجا که این اکستنشن برای اسپوف بدون نقص در تمام فریم‌ها و ورکرها از `chrome.debugger` استفاده می‌کند، کروم به طور پیش‌فرض یک نوار اعلان زرد رنگ در بالای صفحه نمایش می‌دهد. جهت مخفی‌سازی دائمی این نوار، کروم را با فلگ زیر اجرا کنید:
 
-1. Clone this repository to your local machine.
-
-2. Run the following command to install necessary packages:
-
+```bash
+chrome.exe --silent-debugger-extension-api
 ```
-yarn
-```
 
-3. Build the Extension.
+---
 
-```
-yarn build
-```
+## 🔒 مجوزهای مورد نیاز (Permissions)
 
-This command will build in the extension and place it in the /build folder.
+- **debugger:** جهت شبیه‌سازی موقعیت، منطقه زمانی و لایوت به صورت سطح مرورگر (Browser-level).
+- **declarativeNetRequest & host_permissions:** جهت ویرایش هدرهای `Accept-Language` در درخواست‌های شبکه و اتصال به API‌های دریافت موقعیت آی‌پی.
+- **alarms:** جهت پایش مداوم وضعیت تغییر آی‌پی در پس‌زمینه بدون مصرف بیش از حد منابع.
+- **webNavigation:** جهت اتصال خودکار و بهینه‌سازی بارگذاری در تب‌های فعال.
+- **storage:** جهت ذخیره پایدار وضعیت و کانفیگ‌ها.
 
-### Load the Extension in Chrome
+---
 
-1. Open Chrome and navigate to `chrome://extensions/`
-2. Enable 'Developer mode' (toggle in the upper-right corner).
-3. Click 'Load unpacked'.
-4. Select the `build` folder (or the root folder if using `yarn watch:css`).
+## License
+
+GPL-3.0 License

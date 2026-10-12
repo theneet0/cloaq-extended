@@ -1,4 +1,8 @@
-import { attachDebugger } from './debugger.js'
+import { attachDebugger, detachDebugger, sendOverrides } from './debugger.js'
+import {
+  checkAndUpdateIpIfNeeded,
+  updateAcceptLanguageRule,
+} from './ipManager.js'
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
@@ -7,10 +11,74 @@ chrome.runtime.onInstalled.addListener((details) => {
       url: 'html/info.html',
     })
   }
+
+  chrome.alarms.create('checkIpAlarm', { periodInMinutes: 1 })
+
+  chrome.storage.local.get(['configuration', 'locale'], (storage) => {
+    if (storage.configuration === 'ipAddress') {
+      checkAndUpdateIpIfNeeded(true)
+    } else if (storage.configuration && storage.configuration !== 'browserDefault' && storage.locale) {
+      updateAcceptLanguageRule(storage.locale)
+    }
+  })
 })
 
-chrome.webNavigation.onBeforeNavigate.addListener((details) => {
-  chrome.storage.local.get(['timezone', 'locale', 'lat', 'lon'], (storage) => {
+chrome.runtime.onStartup.addListener(() => {
+  chrome.alarms.create('checkIpAlarm', { periodInMinutes: 1 })
+
+  chrome.storage.local.get(['configuration', 'locale'], (storage) => {
+    if (storage.configuration === 'ipAddress') {
+      checkAndUpdateIpIfNeeded(true)
+    } else if (storage.configuration && storage.configuration !== 'browserDefault' && storage.locale) {
+      updateAcceptLanguageRule(storage.locale)
+    }
+  })
+})
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'checkIpAlarm') {
+    checkAndUpdateIpIfNeeded(false)
+  }
+})
+
+chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+  if (details.frameId !== 0) return
+
+  if (
+    details.url?.startsWith('chrome://') ||
+    details.url?.startsWith('chrome-extension://') ||
+    details.url?.startsWith('devtools://') ||
+    details.url?.startsWith('about:')
+  ) {
+    return
+  }
+
+  let storage = await chrome.storage.local.get([
+    'configuration',
+    'timezone',
+    'locale',
+    'lat',
+    'lon',
+    'lastCheckTime',
+  ])
+
+  if (storage.configuration === 'browserDefault') return
+
+  if (storage.configuration === 'ipAddress') {
+    const now = Date.now()
+    if (!storage.lastCheckTime || now - storage.lastCheckTime > 10000) {
+      await checkAndUpdateIpIfNeeded(false)
+      storage = await chrome.storage.local.get([
+        'configuration',
+        'timezone',
+        'locale',
+        'lat',
+        'lon',
+      ])
+    }
+  }
+
+  if (storage.timezone || storage.locale || storage.lat || storage.lon) {
     chrome.debugger.getTargets((tabs) => {
       const currentTab = tabs.find((obj) => obj.tabId === details.tabId)
       if (!currentTab?.attached) {
@@ -21,48 +89,56 @@ chrome.webNavigation.onBeforeNavigate.addListener((details) => {
           storage.lat,
           storage.lon
         )
+      } else {
+        sendOverrides(
+          details.tabId,
+          storage.timezone,
+          storage.locale,
+          storage.lat,
+          storage.lon
+        )
       }
     })
-  })
+  }
 })
 
-// chrome.webNavigation.onCommitted.addListener((details) => {
-//   if (
-//     details.url?.startsWith('chrome://') ||
-//     details.url?.startsWith('chrome-extension://') ||
-//     details.url?.startsWith('https://chromewebstore.google.com/')
-//   )
-//     return
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return
 
-//   chrome.storage.local.get(
-//     ['useDebuggerApi', 'timezone', 'lat', 'lon'],
-//     (storage) => {
-//       if (!storage.useDebuggerApi) {
-//         if (storage.timezone) {
-//           chrome.scripting.executeScript({
-//             target: { tabId: details.tabId, allFrames: true },
-//             world: 'MAIN',
-//             injectImmediately: true,
-//             func: spoofTimezone,
-//             args: [storage.timezone],
-//           })
-//         }
+  if (changes.configuration) {
+    const newConfig = changes.configuration.newValue
+    if (newConfig === 'browserDefault') {
+      updateAcceptLanguageRule(null)
+      detachDebugger()
+    } else if (newConfig === 'ipAddress') {
+      checkAndUpdateIpIfNeeded(true)
+    } else {
+      chrome.storage.local.get(['locale'], (storage) => {
+        if (storage.locale) {
+          updateAcceptLanguageRule(storage.locale)
+        }
+      })
+      detachDebugger()
+    }
+  } else if (changes.locale) {
+    chrome.storage.local.get(['configuration'], (storage) => {
+      if (storage.configuration !== 'browserDefault') {
+        updateAcceptLanguageRule(changes.locale.newValue)
+      }
+    })
+  }
+})
 
-//         if (storage.lat && storage.lon) {
-//           chrome.scripting.executeScript({
-//             target: { tabId: details.tabId, allFrames: true },
-//             world: 'MAIN',
-//             injectImmediately: true,
-//             func: spoofGeolocation,
-//             args: [
-//               {
-//                 latitude: storage.lat,
-//                 longitude: storage.lon,
-//               },
-//             ],
-//           })
-//         }
-//       }
-//     }
-//   )
-// })
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'refreshIp') {
+    checkAndUpdateIpIfNeeded(true).then((result) => {
+      sendResponse(result)
+    })
+    return true
+  }
+  if (request.action === 'detachDebugger') {
+    detachDebugger()
+    sendResponse({ success: true })
+    return true
+  }
+})
