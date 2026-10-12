@@ -1,97 +1,167 @@
-# Cloaq Extended 🛡️
+# Cloaq Extended
 
-**Cloaq Extended** یک اکستنشن پیشرفته برای گوگل کروم (Chromium) است که اطلاعات منطقه زمانی (Time Zone)، موقعیت مکانی (Geolocation)، زبان مرورگر (Locale & Languages)، هدرهای شبکه (`Accept-Language`) و لایوت فیزیکی کیبورد (`navigator.keyboard`) را دقیقاً مطابق با لوکیشن و آی‌پی وی‌پی‌ان (VPN) شما جعل (Spoof) می‌کند تا از شناسایی هویت، زبان واقعی و اثر انگشت مرورگر (Fingerprinting) توسط وب‌سایت‌ها جلوگیری نماید.
+[![GitHub Release](https://img.shields.io/github/v/release/theneet0/cloaq-extended?color=blue)](https://github.com/theneet0/cloaq-extended/releases)
+[![Build and Release Extension](https://github.com/theneet0/cloaq-extended/actions/workflows/release.yml/badge.svg)](https://github.com/theneet0/cloaq-extended/actions/workflows/release.yml)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-green.svg)](LICENSE)
+[![Manifest V3](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3-orange.svg)](manifest.json)
 
----
-
-## ✨ ویژگی‌های جدید در نسخه Extended (نسخه ارتقایافته)
-
-1. **🔄 تطبیق خودکار آی‌پی در پس‌زمینه (Automatic VPN IP Sync):**
-   - دیگر نیازی به خاموش و روشن کردن دستی گزینه «Match IP Address» نیست!
-   - با تغییر لوکیشن یا تعویض سرور وی‌پی‌ان، اکستنشن به صورت بلادرنگ و خودکار آی‌پی جدید را شناسایی کرده و مختصات، تایم‌زون، زبان و کیبورد را بدون نیاز به دخالت کاربر به‌روزرسانی می‌کند.
-   - دارای چندین ارائه‌دهنده پشتیبان (Fallback) جهت اطمینان از عملکرد دائمی و بدون وقفه در هنگام قطعی و وصلی اینترنت یا VPN.
-
-2. **🌐 جعل کامل زبان مرورگر و هدرهای شبکه (Language & Header Spoofing):**
-   - اصلاح هدر درخواست‌های وب `Accept-Language` در لایه شبکه با استفاده از `declarativeNetRequest` و CDP.
-   - جعل متغیرهای جاوااسکریپت `navigator.language` و `navigator.languages` برای جلوگیری از لو رفتن زبان‌های سیستم‌عامل.
-   - همگام‌سازی کامل با توابع `Intl` مرورگر.
-
-3. **⌨️ جعل لایوت کیبورد سخت‌افزاری (Keyboard Layout Spoofing):**
-   - وب‌سایت‌های آنتی‌بات و فینگرپرینتینگ (مانند CreepJS و Cloudflare) از طریق متد `navigator.keyboard.getLayoutMap()` لایوت فیزیکی کیبورد شما (مثلاً چیدمان فارسی یا غیرمنطبق) را شناسایی می‌کردند.
-   - نسخه Extended این متد را به صورت نامحسوس رهگیری کرده و چیدمان متناظر با کشور آی‌پی شما (مانند QWERTY، QWERTZ آلمان، AZERTY فرانسه، ترکی استانبولی و...) را به عنوان یک آبجکت معتبر `KeyboardLayoutMap` شبیه‌سازی می‌کند.
-
-4. **🚀 بیلد و ریلیز خودکار توسط گیت‌هاب (Automated CI/CD Release):**
-   - تمام نسخه‌ها به صورت خودکار توسط GitHub Actions بیلد، تست و به عنوان یک پکیج آماده نصب زیپ در بخش Releases منتشر می‌شوند.
+**Cloaq Extended** is an advanced browser privacy and fingerprint mitigation extension for Chromium-based browsers (Google Chrome, Brave, Microsoft Edge). It dynamically aligns browser-level environment signals—including system timezone, geolocation coordinates, browser locale, HTTP `Accept-Language` headers, and physical keyboard layout—with the user's active VPN or proxy exit IP address.
 
 ---
 
-## 📥 آموزش نصب دستی در گوگل کروم (Manual Installation Guide)
+## Technical Overview
 
-### روش اول: نصب نسخه آماده بیلد شده توسط گیت‌هاب (پیشنهادی)
+Modern browser fingerprinting and bot detection suites (e.g., CreepJS, FingerprintJS Pro, Cloudflare Turnstile, DataDome) identify VPN and proxy users by exposing discrepancies between the network IP address and local browser environment signals. Common leakage vectors include:
 
-نسخه‌های نهایی این اکستنشن مستقیماً توسط گیت‌هاب بیلد شده و در صفحه ریلیزهای همین ریپازیتوری قرار دارند:
+* Mismatches between public IP origin and `Intl.DateTimeFormat().resolvedOptions().timeZone`.
+* Leaks in `navigator.language` and `navigator.languages` exposing the underlying OS installation language.
+* Discrepancies between browser locale and outbound HTTP `Accept-Language` headers.
+* Physical keyboard layout enumeration via the W3C Keyboard Map API (`navigator.keyboard.getLayoutMap()`).
 
-1. به بخش **[Releases](https://github.com/theneet0/cloaq-extended/releases)** در گیت‌هاب بروید.
-2. از زیر بخش **Assets** آخرین نسخه (مانند `v1.3.1`)، فایل فشرده `cloaq-extended.zip` را دانلود کنید.
-3. فایل دانلود شده را در یک پوشه دلخواه در سیستم خود استخراج (Extract / Unzip) کنید.
-4. مرورگر گوگل کروم (یا هر مرورگر بر پایه کرومیوم مانند Edge، Brave و...) را باز کنید و وارد آدرس زیر شوید:
+Cloaq Extended mitigates these vectors through a hybrid architecture combining the Chrome DevTools Protocol (`chrome.debugger`), Declarative Net Request rules, and stealth WebIDL prototype patching.
+
+---
+
+## Core Features
+
+### 1. Automated VPN IP Tracking & Real-Time Sync
+* Continuously monitors network gateway changes via periodic background alarms and navigation hooks.
+* Multi-provider GeoIP resolution pipeline (`ipwho.is`, `ip-api.com`, `freeipapi.com`) with automated fallback and network timeout guards.
+* Automatically updates time zone, geolocation, and locale across active and new tabs whenever the VPN connection switches—eliminating the need to manually toggle settings.
+
+### 2. Browser-Level CDP Overrides
+* Operates via the Chrome DevTools Protocol (`chrome.debugger`) to enforce overrides at the browser engine level:
+  * `Emulation.setTimezoneOverride`: Synchronizes IANA time zone across all execution contexts.
+  * `Emulation.setGeolocationOverride`: Enforces GPS coordinates and accuracy values.
+  * `Emulation.setLocaleOverride`: Configures native formatting and `Intl` APIs across frames and Web Workers.
+
+### 3. Network Header Interception
+* Intercepts and rewrites outbound HTTP `Accept-Language` headers using `declarativeNetRequest` rules and CDP `Network.setExtraHTTPHeaders`.
+* Ensures network requests mirror the spoofed locale with correct language tags and quality values (e.g., `de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7`).
+
+### 4. Stealth Keyboard Layout Emulation
+* Intercepts `navigator.keyboard.getLayoutMap()` to return an authentic `KeyboardLayoutMap` conforming to the physical keyboard standards of the target country.
+* Supported layout profiles:
+  * **German (QWERTZ)** (`de-DE`, `de-AT`, `de-CH`)
+  * **French (AZERTY)** (`fr-FR`, `fr-BE`, `fr-CA`)
+  * **Turkish (Q)** (`tr-TR`)
+  * **United Kingdom (QWERTY)** (`en-GB`)
+  * **Spanish** (`es-ES`)
+  * **Italian** (`it-IT`)
+  * **Russian (JCUKEN)** (`ru-RU`, `uk-UA`)
+  * **United States (QWERTY)** (`en-US`)
+* Designed with native prototype masking: methods are bound to `KeyboardLayoutMap.prototype`, instances contain zero enumerable own properties, and `Function.prototype.toString` calls return `[native code]` to bypass anti-tampering heuristics.
+
+---
+
+## Installation
+
+### Method 1: Pre-built Release (Recommended)
+
+1. Navigate to the **[Releases](https://github.com/theneet0/cloaq-extended/releases)** page.
+2. Under **Assets** of the latest release, download `cloaq-extended.zip`.
+3. Extract the downloaded zip archive to a local directory on your machine.
+4. Open Google Chrome (or your Chromium-based browser) and navigate to:
    ```text
    chrome://extensions/
    ```
-5. از گوشه بالا سمت راست صفحه، کلید **Developer mode (حالت توسعه‌دهنده)** را فعال کنید.
-6. روی دکمه **Load unpacked (بارگذاری بسته بازنشده)** در بالای صفحه کلیک کنید.
-7. پوشه‌ای که فایل‌های اکستنشن را درون آن استخراج کرده بودید انتخاب نمایید.
-8. اکستنشن نصب شده و آیکون آن به نوار افزونه‌های مرورگر اضافه می‌شود.
-9. اکستنشن را پین (Pin) کرده، آن را باز کنید و در بخش **Configuration** گزینه **Match IP Address** را انتخاب کنید. اکنون با هر بار تغییر لوکیشن VPN، تنظیمات به طور خودکار تطبیق داده می‌شوند!
+5. Enable **Developer mode** using the toggle in the upper-right corner.
+6. Click **Load unpacked** in the top navigation bar.
+7. Select the extracted folder containing `manifest.json`.
+8. Pin the extension to your toolbar, open the popup, and select **Match IP Address**.
 
 ---
 
-### روش دوم: بیلد محلی از طریق سورس کد (Development Build)
+### Method 2: Building from Source
 
-اگر می‌خواهید سورس کد را به صورت محلی توسعه داده یا خودتان آن را بیلد کنید:
+**Prerequisites:** Node.js (version 18 or higher) and npm.
 
-1. ریپازیتوری را کلون کنید:
+1. Clone the repository:
    ```bash
    git clone https://github.com/theneet0/cloaq-extended.git
    cd cloaq-extended
    ```
-2. پکیج‌ها را نصب کنید:
+
+2. Install dependencies:
    ```bash
    npm install
    ```
-3. تست‌های خودکار را اجرا کنید:
+
+3. Run the automated test suite:
    ```bash
    npm test
    ```
-4. اکستنشن را بیلد کنید:
+
+4. Compile Tailwind CSS and bundle assets:
    ```bash
    npm run build
    ```
-   *فایل‌های نهایی قابل بارگذاری درون پوشه `build/` ایجاد خواهند شد.*
-5. در صفحه `chrome://extensions/` گزینه **Load unpacked** را بزنید و پوشه `build` را انتخاب کنید.
+   *The distributable extension files are packaged into the `./build/` directory.*
+
+5. Open `chrome://extensions/`, enable **Developer mode**, click **Load unpacked**, and select the `./build/` directory.
 
 ---
 
-## 🔔 مخفی‌سازی نوار اعلان دیباگر (Hide Notification Bar)
+## Suppressing the Debugger Notification Banner
 
-از آنجا که این اکستنشن برای اسپوف بدون نقص در تمام فریم‌ها و ورکرها از `chrome.debugger` استفاده می‌کند، کروم به طور پیش‌فرض یک نوار اعلان زرد رنگ در بالای صفحه نمایش می‌دهد. جهت مخفی‌سازی دائمی این نوار، کروم را با فلگ زیر اجرا کنید:
+Because Cloaq Extended utilizes the Chromium Debugger API for robust, multi-frame emulation, Chrome displays an informational banner at the top of active tabs:
 
-```bash
+> *"Cloaq is debugging this browser"*
+
+To permanently suppress this banner, launch Chromium with the `--silent-debugger-extension-api` command-line flag:
+
+### Windows:
+Modify your Google Chrome desktop shortcut or launch via PowerShell:
+```powershell
 chrome.exe --silent-debugger-extension-api
+```
+
+### macOS:
+```bash
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --silent-debugger-extension-api
+```
+
+### Linux:
+```bash
+google-chrome --silent-debugger-extension-api
 ```
 
 ---
 
-## 🔒 مجوزهای مورد نیاز (Permissions)
+## Configuration Modes
 
-- **debugger:** جهت شبیه‌سازی موقعیت، منطقه زمانی و لایوت به صورت سطح مرورگر (Browser-level).
-- **declarativeNetRequest & host_permissions:** جهت ویرایش هدرهای `Accept-Language` در درخواست‌های شبکه و اتصال به API‌های دریافت موقعیت آی‌پی.
-- **alarms:** جهت پایش مداوم وضعیت تغییر آی‌پی در پس‌زمینه بدون مصرف بیش از حد منابع.
-- **webNavigation:** جهت اتصال خودکار و بهینه‌سازی بارگذاری در تب‌های فعال.
-- **storage:** جهت ذخیره پایدار وضعیت و کانفیگ‌ها.
+| Mode | Description |
+| :--- | :--- |
+| **Match IP Address** | Queries public IP endpoints, resolves geolocation coordinates and locale, and dynamically tracks VPN switching in real time. |
+| **Location Presets** | Provides over 30 predefined metropolitan profiles (e.g., London, Berlin, Paris, Tokyo, New York, Zurich). |
+| **Custom** | Allows manual input of Time Zone identifier, Locale string, Latitude, and Longitude coordinates. |
+| **Browser Default** | Detaches the debugger and restores native system environment settings. |
+
+---
+
+## Permissions Architecture
+
+| Permission | Justification |
+| :--- | :--- |
+| `debugger` | Required to invoke Chrome DevTools Protocol domains (`Emulation`, `Page`, `Network`). |
+| `declarativeNetRequest` | Modifies outbound `Accept-Language` HTTP request headers at the network stack. |
+| `alarms` | Schedules lightweight periodic background verification of network IP transitions. |
+| `webNavigation` | Detects document navigation lifecycle events to apply overrides prior to DOM script execution. |
+| `storage` | Persists user preferences and cached geolocation metadata locally. |
+| `host_permissions: ["<all_urls>"]` | Permits Declarative Net Request rules across all visited origins and allows background service workers to query GeoIP APIs. |
+
+---
+
+## Automated CI/CD Pipeline
+
+Every push to the `main` branch triggers an automated GitHub Actions workflow (`.github/workflows/release.yml`) that:
+1. Validates source integrity and runs unit tests (`npm test`).
+2. Compiles production assets and minified CSS (`npm run build`).
+3. Extracts the version dynamically from `manifest.json`.
+4. Packages and publishes a versioned `cloaq-extended.zip` release bundle to GitHub Releases.
 
 ---
 
 ## License
 
-GPL-3.0 License
+This project is licensed under the terms of the GNU General Public License v3.0 ([GPL-3.0](LICENSE)).

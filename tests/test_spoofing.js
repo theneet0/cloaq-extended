@@ -188,7 +188,7 @@ async function runTests() {
   )
   const manifest = JSON.parse(manifestRaw)
   assert.strictEqual(manifest.manifest_version, 3)
-  assert.strictEqual(manifest.version, '1.3.1')
+  assert.strictEqual(manifest.version, '1.3.2')
   assert.ok(manifest.permissions.includes('declarativeNetRequest'))
   assert.ok(manifest.permissions.includes('alarms'))
   assert.ok(manifest.permissions.includes('storage'))
