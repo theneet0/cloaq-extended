@@ -137,8 +137,32 @@ async function runTests() {
     vm.runInContext(`Function.prototype.toString.call(Object.getOwnPropertyDescriptor(Navigator.prototype, 'language').get)`, vmContext),
     'function get language() { [native code] }'
   )
+  // CreepJS prototype lie checks: non-constructor methods must NOT have a .prototype property
+  assert.strictEqual(
+    vm.runInContext(`'prototype' in Function.prototype.toString`, vmContext),
+    false
+  )
+  assert.deepStrictEqual(
+    Array.from(vm.runInContext(`Object.getOwnPropertyNames(Function.prototype.toString)`, vmContext)),
+    ['length', 'name']
+  )
+  assert.strictEqual(
+    vm.runInContext(`'prototype' in Date.prototype.getTimezoneOffset`, vmContext),
+    false
+  )
+  assert.deepStrictEqual(
+    Array.from(vm.runInContext(`Object.getOwnPropertyNames(Date.prototype.getTimezoneOffset)`, vmContext)),
+    ['length', 'name']
+  )
+  assert.strictEqual(
+    vm.runInContext(
+      `(() => { try { new Date.prototype.getTimezoneOffset(); return false; } catch (e) { return e instanceof TypeError; } })()`,
+      vmContext
+    ),
+    true
+  )
 
-  // 4b. Check Intl & Timezone consistency
+  // 4b. Check Intl & Timezone consistency + explicit locale preservation on NumberFormat/Collator/PluralRules
   assert.strictEqual(
     vm.runInContext(`new Intl.DateTimeFormat().resolvedOptions().locale`, vmContext),
     'de-DE'
@@ -151,7 +175,7 @@ async function runTests() {
     vm.runInContext(`Intl.DateTimeFormat().resolvedOptions().timeZone`, vmContext),
     'Europe/Berlin'
   )
-  // Explicit timeZone option must be respected (anti-CreepJS lie detection)
+  // Explicit timeZone and locale options must be respected (anti-CreepJS lie detection)
   assert.strictEqual(
     vm.runInContext(`new Intl.DateTimeFormat('en-US', { timeZone: 'UTC' }).resolvedOptions().timeZone`, vmContext),
     'UTC'
@@ -163,6 +187,30 @@ async function runTests() {
   assert.strictEqual(
     vm.runInContext(`new Intl.DateTimeFormat('fr-FR', { timeZone: 'Asia/Tokyo' }).resolvedOptions().timeZone`, vmContext),
     'Asia/Tokyo'
+  )
+  assert.strictEqual(
+    vm.runInContext(`new Intl.NumberFormat().resolvedOptions().locale`, vmContext),
+    'de-DE'
+  )
+  assert.strictEqual(
+    vm.runInContext(`new Intl.NumberFormat('fr-FR').resolvedOptions().locale`, vmContext),
+    'fr-FR'
+  )
+  assert.strictEqual(
+    vm.runInContext(`new Intl.Collator('ja-JP').resolvedOptions().locale`, vmContext),
+    new Intl.Collator('ja-JP').resolvedOptions().locale
+  )
+  assert.strictEqual(
+    vm.runInContext(`new Intl.PluralRules('ar-EG').resolvedOptions().locale`, vmContext),
+    new Intl.PluralRules('ar-EG').resolvedOptions().locale
+  )
+  assert.strictEqual(
+    vm.runInContext(`new Intl.NumberFormat().format(1234.56)`, vmContext),
+    new Intl.NumberFormat('de-DE').format(1234.56)
+  )
+  assert.strictEqual(
+    vm.runInContext(`(1234.56).toLocaleString()`, vmContext),
+    (1234.56).toLocaleString('de-DE')
   )
 
   // 4c. Check keyboard.getLayoutMap stealth
@@ -185,7 +233,7 @@ async function runTests() {
   )
   console.log('  PASS: DOM injection script stealth and WebIDL prototype conformity verified.')
 
-  console.log('Test 5: Verifying comprehensive Date & Timezone emulation and DST accuracy...')
+  console.log('Test 5: Verifying comprehensive Date & Timezone emulation, local setters, ISO parsing, and DST accuracy...')
   // Winter in Europe/Berlin (UTC+1 -> getTimezoneOffset() === -60)
   assert.strictEqual(
     vm.runInContext(`new Date(Date.UTC(2026, 0, 15, 12, 0, 0)).getTimezoneOffset()`, vmContext),
@@ -207,12 +255,63 @@ async function runTests() {
   )
   // Component getters in spoofed timezone
   assert.strictEqual(vm.runInContext(`new Date(2026, 6, 15, 14, 30, 45).getFullYear()`, vmContext), 2026)
+  assert.strictEqual(vm.runInContext(`new Date(2026, 6, 15, 14, 30, 45).getYear()`, vmContext), 126)
   assert.strictEqual(vm.runInContext(`new Date(2026, 6, 15, 14, 30, 45).getMonth()`, vmContext), 6)
   assert.strictEqual(vm.runInContext(`new Date(2026, 6, 15, 14, 30, 45).getDate()`, vmContext), 15)
   assert.strictEqual(vm.runInContext(`new Date(2026, 6, 15, 14, 30, 45).getDay()`, vmContext), 3) // Wednesday
   assert.strictEqual(vm.runInContext(`new Date(2026, 6, 15, 14, 30, 45).getHours()`, vmContext), 14)
   assert.strictEqual(vm.runInContext(`new Date(2026, 6, 15, 14, 30, 45).getMinutes()`, vmContext), 30)
   assert.strictEqual(vm.runInContext(`new Date(2026, 6, 15, 14, 30, 45).getSeconds()`, vmContext), 45)
+
+  // Local Date.prototype.set* methods must operate in the spoofed timezone (not host OS timezone!)
+  const setHoursResult = vm.runInContext(
+    `(() => {
+      const d = new Date(2026, 6, 15, 14, 30, 45);
+      d.setHours(0, 0, 0, 0);
+      return { h: d.getHours(), m: d.getMinutes(), s: d.getSeconds(), date: d.getDate() };
+    })()`,
+    vmContext
+  )
+  assert.deepStrictEqual({ ...setHoursResult }, { h: 0, m: 0, s: 0, date: 15 })
+
+  const setDateMonthYearResult = vm.runInContext(
+    `(() => {
+      const d = new Date(2026, 6, 15, 14, 30, 45);
+      d.setFullYear(2025, 0, 20);
+      d.setMinutes(15, 20, 0);
+      return { y: d.getFullYear(), yr: d.getYear(), mo: d.getMonth(), dt: d.getDate(), h: d.getHours(), min: d.getMinutes(), sec: d.getSeconds() };
+    })()`,
+    vmContext
+  )
+  assert.deepStrictEqual({ ...setDateMonthYearResult }, {
+    y: 2025,
+    yr: 125,
+    mo: 0,
+    dt: 20,
+    h: 14,
+    min: 15,
+    sec: 20,
+  })
+
+  // ISO date-only forms YYYY, YYYY-MM, YYYY-MM-DD must remain UTC per ECMAScript spec
+  assert.strictEqual(
+    vm.runInContext(`new Date('2026').toISOString()`, vmContext),
+    '2026-01-01T00:00:00.000Z'
+  )
+  assert.strictEqual(
+    vm.runInContext(`new Date('2026-07').toISOString()`, vmContext),
+    '2026-07-01T00:00:00.000Z'
+  )
+  assert.strictEqual(
+    vm.runInContext(`new Date('2026-07-15').toISOString()`, vmContext),
+    '2026-07-15T00:00:00.000Z'
+  )
+  // ISO date-time without offset must be parsed in spoofed timezone (Europe/Berlin = UTC+2 in July -> 12:30Z)
+  assert.strictEqual(
+    vm.runInContext(`new Date('2026-07-15T14:30:00').toISOString()`, vmContext),
+    '2026-07-15T12:30:00.000Z'
+  )
+
   assert.strictEqual(
     vm.runInContext(`new Date(2026, 6, 15, 14, 30, 45).toDateString()`, vmContext),
     'Wed Jul 15 2026'
@@ -269,7 +368,6 @@ async function runTests() {
     `,
     iframeCtx
   )
-  // Re-run on fresh window with HTMLIFrameElement present
   const iframeTestVm = vm.createContext({})
   const parentWin = vm.runInContext(
     `
@@ -291,6 +389,8 @@ async function runTests() {
     iframeTestVm
   )
   parentWin.__childWin = iframeWin
+  // Also simulate independent contentSpoof.js injection into child frame before contentWindow access
+  vm.runInContext(injectionScript, iframeCtx)
   vm.runInContext(injectionScript, iframeTestVm)
   const cw = vm.runInContext(`Object.create(HTMLIFrameElement.prototype).contentWindow`, iframeTestVm)
   assert.strictEqual(
@@ -302,15 +402,41 @@ async function runTests() {
     vm.runInContext(`new Date(Date.UTC(2026, 6, 15, 12, 0, 0)).getTimezoneOffset()`, iframeCtx),
     -120
   )
+  // Cross-realm Function.prototype.toString must mask functions across parent and child frames
   assert.strictEqual(
-    vm.runInContext(`Function.prototype.toString.call(Date.prototype.getTimezoneOffset)`, iframeCtx),
+    vm.runInContext(
+      `window.Function.prototype.toString.call(Object.create(HTMLIFrameElement.prototype).contentWindow.Date.prototype.getTimezoneOffset)`,
+      iframeTestVm
+    ),
     'function getTimezoneOffset() { [native code] }'
   )
-  console.log('  PASS: Date & Timezone emulation, DST accuracy, and synchronous iframe patching verified.')
+  console.log('  PASS: Date & Timezone emulation, local setters, ISO parsing, and cross-realm iframe stealth verified.')
 
-  console.log('Test 6: Testing live in-place reconfiguration without re-wrapping...')
+  console.log('Test 6: Testing true live in-place reconfiguration without re-wrapping...')
+  const dateCtorBefore = vm.runInContext(`Date`, vmContext)
+  const dtfCtorBefore = vm.runInContext(`Intl.DateTimeFormat`, vmContext)
+  const explicitDtfBefore = vm.runInContext(
+    `new Intl.DateTimeFormat('fr-FR', { timeZone: 'Asia/Tokyo' })`,
+    vmContext
+  )
+
   const nyScript = generateInjectionScript('en-US', 'America/New_York', 40.7127, -74.0059)
   vm.runInContext(nyScript, vmContext)
+
+  // Verify constructors were NOT re-wrapped (true in-place update!)
+  assert.strictEqual(vm.runInContext(`Date`, vmContext), dateCtorBefore)
+  assert.strictEqual(vm.runInContext(`Intl.DateTimeFormat`, vmContext), dtfCtorBefore)
+  // Verify pre-existing explicit DateTimeFormat instances retain their explicit locale and timeZone
+  assert.strictEqual(explicitDtfBefore.resolvedOptions().locale, 'fr-FR')
+  assert.strictEqual(explicitDtfBefore.resolvedOptions().timeZone, 'Asia/Tokyo')
+
+  // Verify linked child iframe also updates in-place when parent updates
+  vm.runInContext(nyScript, iframeTestVm)
+  assert.strictEqual(
+    vm.runInContext(`Intl.DateTimeFormat().resolvedOptions().timeZone`, iframeCtx),
+    'America/New_York'
+  )
+
   assert.strictEqual(vm.runInContext(`navigator.language`, vmContext), 'en-US')
   assert.strictEqual(
     vm.runInContext(`Intl.DateTimeFormat().resolvedOptions().timeZone`, vmContext),
@@ -328,7 +454,7 @@ async function runTests() {
   const nyMap = await vm.runInContext(`navigator.keyboard.getLayoutMap()`, vmContext)
   assert.strictEqual(nyMap.get('KeyZ'), 'z')
   assert.strictEqual(nyMap.get('KeyY'), 'y')
-  console.log('  PASS: Live in-place reconfiguration verified.')
+  console.log('  PASS: True live in-place reconfiguration without re-wrapping verified.')
 
   console.log('Test 7: Testing Bit-Codec (encodeSpoofConfigToBits / decodeSpoofConfigFromBits) across all presets and locales...')
   for (const [key, loc] of Object.entries(locationsConfigurations)) {
@@ -352,16 +478,16 @@ async function runTests() {
     assert.strictEqual(decoded.lat, null)
     assert.strictEqual(decoded.lon, null)
   }
-  // Custom locale not in table
-  const customBits = encodeSpoofConfigToBits('Asia/Tehran', 'es-419', 35.6892, 51.389)
+  // Custom locale up to 14 characters not in table + modern IANA timezone names
+  const customBits = encodeSpoofConfigToBits('Asia/Kathmandu', 'zh-Hans-CN', 27.7172, 85.324)
   const customDecoded = decodeSpoofConfigFromBits(customBits)
-  assert.strictEqual(customDecoded.timezone, 'Asia/Tehran')
-  assert.strictEqual(customDecoded.locale, 'es-419')
-  assert.strictEqual(customDecoded.lat, 35.6892)
-  assert.strictEqual(customDecoded.lon, 51.389)
-  console.log('  PASS: Bit-Codec lossless encoding & decoding verified across all presets and locales.')
+  assert.strictEqual(customDecoded.timezone, 'Asia/Kathmandu')
+  assert.strictEqual(customDecoded.locale, 'zh-Hans-CN')
+  assert.strictEqual(customDecoded.lat, 27.7172)
+  assert.strictEqual(customDecoded.lon, 85.324)
+  console.log('  PASS: Bit-Codec lossless encoding & decoding verified across all presets, modern zones, and 14-char locales.')
 
-  console.log('Test 8: Testing Zero-Latency MAIN-world contentSpoof.js execution from bit-carrier scripts...')
+  console.log('Test 8: Testing Zero-Latency MAIN-world contentSpoof.js & Dedicated Web Worker bootstrap pre-shield...')
   const preShieldContext = vm.createContext({})
   vm.runInContext(
     `
@@ -376,9 +502,34 @@ async function runTests() {
         cb({ coords: { latitude: 0, longitude: 0, accuracy: 100 } });
       }
     });
+    const blobStore = new Map();
+    let blobIdCounter = 0;
+    class MockBlob {
+      constructor(parts, options) {
+        this.parts = parts;
+        this.options = options;
+      }
+    }
+    const MockURL = {
+      createObjectURL(blob) {
+        const u = 'blob:https://example.com/' + (++blobIdCounter);
+        blobStore.set(u, blob);
+        return u;
+      }
+    };
+    class MockWorker {
+      constructor(scriptUrl, options) {
+        this.scriptUrl = scriptUrl;
+        this.options = options;
+        this.blob = blobStore.get(scriptUrl);
+      }
+    }
     globalThis.window = globalThis;
     globalThis.Navigator = MockNavigatorProto;
     globalThis.navigator = mockNavInstance;
+    globalThis.Blob = MockBlob;
+    globalThis.URL = MockURL;
+    globalThis.Worker = MockWorker;
     `,
     preShieldContext
   )
@@ -407,7 +558,32 @@ async function runTests() {
   )
   assert.strictEqual(geoCoords.latitude, 35.6895)
   assert.strictEqual(geoCoords.longitude, 139.6917)
-  console.log('  PASS: Zero-Latency MAIN-world contentSpoof.js pre-shield verified.')
+
+  // Verify inline Blob Web Worker spawned at t = 0.00ms receives bootstrap pre-shield & spoofs WorkerNavigator
+  const workerSource = vm.runInContext(
+    `(() => {
+      const b = new Blob(['globalThis.__workerTz = Intl.DateTimeFormat().resolvedOptions().timeZone; globalThis.__workerLang = navigator.language;'], { type: 'application/javascript' });
+      const u = URL.createObjectURL(b);
+      const w = new Worker(u);
+      return w.blob.parts.join('');
+    })()`,
+    preShieldContext
+  )
+  const workerVm = vm.createContext({})
+  vm.runInContext(
+    `
+    class WorkerNavigator {}
+    globalThis.WorkerNavigator = WorkerNavigator;
+    globalThis.navigator = Object.create(WorkerNavigator.prototype);
+    `,
+    workerVm
+  )
+  vm.runInContext(workerSource, workerVm)
+  assert.strictEqual(vm.runInContext(`__workerTz`, workerVm), 'Asia/Tokyo')
+  assert.strictEqual(vm.runInContext(`__workerLang`, workerVm), 'ja-JP')
+  assert.strictEqual(vm.runInContext(`navigator.hasOwnProperty('language')`, workerVm), false)
+  assert.strictEqual(vm.runInContext(`WorkerNavigator.prototype.hasOwnProperty('language')`, workerVm), true)
+  console.log('  PASS: Zero-Latency MAIN-world contentSpoof.js & Dedicated Web Worker pre-shield verified.')
 
   console.log('Test 9: Testing manifest.json validity...')
   const manifestRaw = fs.readFileSync(
@@ -416,7 +592,7 @@ async function runTests() {
   )
   const manifest = JSON.parse(manifestRaw)
   assert.strictEqual(manifest.manifest_version, 3)
-  assert.strictEqual(manifest.version, '1.3.3')
+  assert.strictEqual(manifest.version, '1.3.4')
   assert.ok(manifest.permissions.includes('declarativeNetRequest'))
   assert.ok(manifest.permissions.includes('alarms'))
   assert.ok(manifest.permissions.includes('storage'))
@@ -452,7 +628,7 @@ async function runTests() {
   }
   console.log('  PASS: Source files and build integrity verified.')
 
-  console.log('Test 11: Testing debugger.js chrome://newtab transition recovery, CDP timezone reset, and content script registration...')
+  console.log('Test 11: Testing debugger.js chrome://newtab transition recovery, CDP timezone deduplication/reset, and content script registration...')
   const cdpCommands = []
   let registeredScripts = []
   let attachAttempts = 0
@@ -517,6 +693,10 @@ async function runTests() {
           return
         }
         globalThis.chrome.runtime.lastError = null
+        if (method === 'Page.addScriptToEvaluateOnNewDocument') {
+          if (cb) cb({ identifier: 'script-1' })
+          return
+        }
         if (cb) cb()
       },
       detach(target, cb) {
@@ -546,19 +726,26 @@ async function runTests() {
   // Test automatic retry when attachDebugger initially fails on chrome://newtab
   attachDebugger(99, 'Europe/Berlin', 'de-DE', 52.52, 13.405)
   assert.strictEqual(attachAttempts, 1)
-  await new Promise((r) => setTimeout(r, 60))
+  await new Promise((r) => setTimeout(r, 40))
   assert.ok(attachAttempts >= 2, 'Should automatically retry attach after chrome://newtab rejection')
-  assert.ok(
-    cdpCommands.some(
-      (c) =>
-        c.tabId === 99 &&
-        c.method === 'Emulation.setTimezoneOverride' &&
-        c.params.timezoneId === 'Europe/Berlin'
-    ),
-    'Should apply Emulation.setTimezoneOverride once retry succeeds'
-  )
+  const berlinTzCallsBefore = cdpCommands.filter(
+    (c) =>
+      c.tabId === 99 &&
+      c.method === 'Emulation.setTimezoneOverride' &&
+      c.params.timezoneId === 'Europe/Berlin'
+  ).length
+  assert.strictEqual(berlinTzCallsBefore, 1, 'Should apply Emulation.setTimezoneOverride once retry succeeds')
 
-  // Test switching timezone on an already-attached tab (clears with '' first, then applies new timezone)
+  // Calling sendOverrides again with the SAME timezone during navigation must NOT re-send or reset Emulation.setTimezoneOverride
+  sendOverrides(99, 'Europe/Berlin', 'de-DE', 52.52, 13.405)
+  const berlinTzCallsAfter = cdpCommands.filter(
+    (c) =>
+      c.tabId === 99 &&
+      c.method === 'Emulation.setTimezoneOverride'
+  ).length
+  assert.strictEqual(berlinTzCallsAfter, 1, 'Must deduplicate identical timezone override calls on same tab')
+
+  // Test switching timezone on an already-attached tab (clears with '' first, then applies new timezone, and removes old Page script)
   sendOverrides(99, 'America/New_York', 'en-US', 40.7128, -74.006)
   assert.ok(
     cdpCommands.some(
@@ -578,12 +765,79 @@ async function runTests() {
     ),
     'Should apply new timezone America/New_York after clearing'
   )
-  console.log('  PASS: chrome://newtab attach recovery, CDP timezone reset, and MAIN-world shield verified.')
+  assert.ok(
+    cdpCommands.some(
+      (c) =>
+        c.tabId === 99 &&
+        c.method === 'Page.removeScriptToEvaluateOnNewDocument' &&
+        c.params.identifier === 'script-1'
+    ),
+    'Should remove previous Page.addScriptToEvaluateOnNewDocument script identifier when updating overrides'
+  )
+  console.log('  PASS: chrome://newtab attach recovery, CDP timezone deduplication/reset, and MAIN-world shield verified.')
 
-  console.log('\nAll 11 tests passed successfully!')
+  console.log('Test 12: Testing ipManager.js preset-to-ipAddress mismatch recovery and instant lastTimezone hydration...')
+  const mockStorageData = {
+    configuration: 'ipAddress',
+    lastIp: '185.220.101.1',
+    lastCountry: 'DE',
+    lastTimezone: 'Europe/Berlin',
+    lastLocale: 'de-DE',
+    lastLat: 52.52,
+    lastLon: 13.405,
+    lastCheckTime: Date.now(),
+    // Simulate stale manual preset ('Europe/London') left in storage when user switches to ipAddress
+    timezone: 'Europe/London',
+    locale: 'en-GB',
+    lat: 51.5074,
+    lon: -0.1278,
+  }
+
+  globalThis.chrome.storage = {
+    local: {
+      async get(keys) {
+        const res = {}
+        for (const k of keys) {
+          res[k] = mockStorageData[k]
+        }
+        return res
+      },
+      async set(obj) {
+        Object.assign(mockStorageData, obj)
+      },
+    },
+  }
+  globalThis.chrome.declarativeNetRequest = {
+    async updateDynamicRules() {},
+  }
+  const origFetch = globalThis.fetch
+  globalThis.fetch = async () => ({
+    ok: true,
+    async text() {
+      return JSON.stringify({
+        ip: '185.220.101.1',
+        country_code: 'DE',
+        timezone: 'Europe/Berlin',
+        latitude: '52.52',
+        longitude: '13.405',
+      })
+    },
+  })
+
+  const { checkAndUpdateIpIfNeeded } = await import('../js/ipManager.js')
+  const ipRes = await checkAndUpdateIpIfNeeded(false)
+  globalThis.fetch = origFetch
+
+  assert.strictEqual(ipRes.changed, true, 'Must detect mismatch between stale preset timezone and IP timezone even when IP matches lastIp')
+  assert.strictEqual(mockStorageData.timezone, 'Europe/Berlin')
+  assert.strictEqual(mockStorageData.locale, 'de-DE')
+  console.log('  PASS: ipManager.js mismatch recovery and instant hydration verified.')
+
+  console.log('\nAll 12 tests passed successfully!')
 }
 
 runTests().catch((err) => {
   console.error('Test failed:', err)
   process.exit(1)
 })
+

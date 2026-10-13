@@ -141,7 +141,7 @@ export const TIMEZONE_LIST = [
   'Asia/Chita', 'Asia/Choibalsan', 'Asia/Colombo', 'Asia/Damascus', 'Asia/Dhaka', 'Asia/Dili',
   'Asia/Dubai', 'Asia/Dushanbe', 'Asia/Famagusta', 'Asia/Gaza', 'Asia/Hebron', 'Asia/Ho_Chi_Minh',
   'Asia/Hong_Kong', 'Asia/Hovd', 'Asia/Irkutsk', 'Asia/Istanbul', 'Asia/Jakarta', 'Asia/Jayapura',
-  'Asia/Jerusalem', 'Asia/Kabul', 'Asia/Kamchatka', 'Asia/Karachi', 'Asia/Katmandu', 'Asia/Khandyga',
+  'Asia/Jerusalem', 'Asia/Kabul', 'Asia/Kamchatka', 'Asia/Karachi', 'Asia/Kathmandu', 'Asia/Katmandu', 'Asia/Khandyga',
   'Asia/Kolkata', 'Asia/Krasnoyarsk', 'Asia/Kuala_Lumpur', 'Asia/Kuching', 'Asia/Kuwait', 'Asia/Macau',
   'Asia/Magadan', 'Asia/Makassar', 'Asia/Manila', 'Asia/Muscat', 'Asia/Nicosia', 'Asia/Novokuznetsk',
   'Asia/Novosibirsk', 'Asia/Omsk', 'Asia/Oral', 'Asia/Phnom_Penh', 'Asia/Pontianak', 'Asia/Pyongyang',
@@ -172,11 +172,11 @@ export const TIMEZONE_LIST = [
   'Europe/Warsaw', 'Europe/Zagreb', 'Europe/Zaporozhye', 'Europe/Zurich', 'GMT', 'Indian/Antananarivo',
   'Indian/Chagos', 'Indian/Christmas', 'Indian/Cocos', 'Indian/Comoro', 'Indian/Kerguelen', 'Indian/Mahe',
   'Indian/Maldives', 'Indian/Mauritius', 'Indian/Mayotte', 'Indian/Reunion', 'Pacific/Apia', 'Pacific/Auckland',
-  'Pacific/Bougainville', 'Pacific/Chatham', 'Pacific/Easter', 'Pacific/Efate', 'Pacific/Enderbury', 'Pacific/Fakaofo',
+  'Pacific/Bougainville', 'Pacific/Chatham', 'Pacific/Chuuk', 'Pacific/Easter', 'Pacific/Efate', 'Pacific/Enderbury', 'Pacific/Fakaofo',
   'Pacific/Fiji', 'Pacific/Funafuti', 'Pacific/Galapagos', 'Pacific/Gambier', 'Pacific/Guadalcanal', 'Pacific/Guam',
   'Pacific/Honolulu', 'Pacific/Johnston', 'Pacific/Kanton', 'Pacific/Kiritimati', 'Pacific/Kosrae', 'Pacific/Kwajalein',
   'Pacific/Majuro', 'Pacific/Marquesas', 'Pacific/Midway', 'Pacific/Nauru', 'Pacific/Niue', 'Pacific/Norfolk',
-  'Pacific/Noumea', 'Pacific/Pago_Pago', 'Pacific/Palau', 'Pacific/Pitcairn', 'Pacific/Ponape', 'Pacific/Port_Moresby',
+  'Pacific/Noumea', 'Pacific/Pago_Pago', 'Pacific/Palau', 'Pacific/Pitcairn', 'Pacific/Pohnpei', 'Pacific/Ponape', 'Pacific/Port_Moresby',
   'Pacific/Rarotonga', 'Pacific/Saipan', 'Pacific/Tahiti', 'Pacific/Tarawa', 'Pacific/Tongatapu', 'Pacific/Truk',
   'Pacific/Wake', 'Pacific/Wallis', 'US/Alaska', 'US/Central', 'US/Eastern', 'US/Hawaii',
   'US/Mountain', 'US/Pacific', 'UTC'
@@ -211,7 +211,7 @@ export const LOCALE_LIST = [
   'zh-HK', 'zh-MO', 'zh-SG', 'zh-TW'
 ]
 
-export const BIT_FILE_COUNT = 120
+export const BIT_FILE_COUNT = 160
 
 export const getKeyboardLayoutForLocale = (locale) => {
   if (!locale) return QWERTY_US
@@ -270,9 +270,9 @@ export const encodeSpoofConfigToBits = (timezone, locale, lat, lon) => {
     locIndex = LOCALE_LIST.indexOf(locale)
     if (locIndex === -1) {
       locIndex = 254
-      const cleanLoc = String(locale).slice(0, 7)
+      const cleanLoc = String(locale).slice(0, 14)
       for (let c = 0; c < cleanLoc.length; c++) {
-        writeInt(cleanLoc.charCodeAt(c) & 0xff, 62 + c * 8, 8)
+        writeInt(cleanLoc.charCodeAt(c) & 0x7f, 62 + c * 7, 7)
       }
     }
   }
@@ -321,8 +321,8 @@ export const decodeSpoofConfigFromBits = (bitIndices) => {
     locale = LOCALE_LIST[locIndex]
   } else if (locIndex === 254) {
     let customLoc = ''
-    for (let c = 0; c < 7; c++) {
-      const code = readInt(62 + c * 8, 8)
+    for (let c = 0; c < 14; c++) {
+      const code = readInt(62 + c * 7, 7)
       if (code === 0) break
       customLoc += String.fromCharCode(code)
     }
@@ -343,6 +343,7 @@ export const decodeSpoofConfigFromBits = (bitIndices) => {
 
 const buildCoreSpoofFunctionSource = () => `
 function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
+  'use strict';
   try {
     let currentLocale = rawLocale || null;
     let currentLanguages = currentLocale
@@ -353,20 +354,41 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
     let currentLat = rawLat != null && rawLat !== '' && !Number.isNaN(Number(rawLat)) ? Number(rawLat) : null;
     let currentLon = rawLon != null && rawLon !== '' && !Number.isNaN(Number(rawLon)) ? Number(rawLon) : null;
 
+    const rootWin = typeof window !== 'undefined' ? window : globalThis;
     const STATE_SYM = Symbol.for('__cloaq_internal_state__');
+
     try {
-      const existingState = Function.prototype.toString.call(STATE_SYM);
-      if (existingState && typeof existingState.update === 'function') {
-        existingState.update(currentLocale, currentLanguages, currentTimezone, currentLayout, currentLat, currentLon);
-        return;
+      if (rootWin.Function && rootWin.Function.prototype && typeof rootWin.Function.prototype.toString === 'function') {
+        const existingState = rootWin.Function.prototype.toString.call(STATE_SYM);
+        if (existingState && typeof existingState.update === 'function') {
+          existingState.update(currentLocale, currentLanguages, currentTimezone, currentLayout, currentLat, currentLon);
+          if (typeof existingState.patchWindow === 'function') {
+            existingState.patchWindow(rootWin, false);
+          }
+          return;
+        }
+      }
+    } catch (e) {}
+
+    try {
+      if (rootWin.parent && rootWin.parent !== rootWin && rootWin.parent.Function && rootWin.parent.Function.prototype) {
+        const parentState = rootWin.parent.Function.prototype.toString.call(STATE_SYM);
+        if (parentState && typeof parentState.patchWindow === 'function') {
+          parentState.update(currentLocale, currentLanguages, currentTimezone, currentLayout, currentLat, currentLon);
+          parentState.patchWindow(rootWin, false);
+          return;
+        }
       }
     } catch (e) {}
 
     const customToStrings = new WeakMap();
+    const linkedStates = new Set();
     const patchedWindows = new WeakSet();
-    const explicitLocaleDTFs = new WeakSet();
+    const explicitLocaleObjs = new WeakSet();
     const explicitTzDTFs = new WeakSet();
     const spoofedInstances = new WeakMap();
+    const blobPartsMap = new WeakMap();
+    const blobUrlMap = new Map();
     let currentSpoofedMapData = currentLayout ? new Map(Object.entries(currentLayout)) : new Map();
 
     const TopOrigDTF =
@@ -403,7 +425,23 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
     rebuildTzFormatter(null);
 
     const internalState = {
-      update(newLoc, newLangs, newTz, newLayout, newLat, newLon) {
+      customToStrings,
+      linkedStates,
+      patchWindow,
+      getCustomToString(fn) {
+        if (!fn || (typeof fn !== 'function' && typeof fn !== 'object')) return undefined;
+        if (customToStrings.has(fn)) return customToStrings.get(fn);
+        for (const other of linkedStates) {
+          if (other && other.customToStrings && other.customToStrings.has(fn)) {
+            return other.customToStrings.get(fn);
+          }
+        }
+        return undefined;
+      },
+      update(newLoc, newLangs, newTz, newLayout, newLat, newLon, visited) {
+        const seen = visited || new Set();
+        if (seen.has(internalState)) return;
+        seen.add(internalState);
         if (newLoc !== undefined) {
           currentLocale = newLoc || null;
           currentLanguages = currentLocale
@@ -418,18 +456,28 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
           currentLayout = newLayout;
           currentSpoofedMapData = new Map(Object.entries(currentLayout));
         }
-        if (newLat !== undefined) currentLat = newLat;
-        if (newLon !== undefined) currentLon = newLon;
+        if (newLat !== undefined) currentLat = newLat != null && newLat !== '' && !Number.isNaN(Number(newLat)) ? Number(newLat) : null;
+        if (newLon !== undefined) currentLon = newLon != null && newLon !== '' && !Number.isNaN(Number(newLon)) ? Number(newLon) : null;
+        for (const other of linkedStates) {
+          if (other && typeof other.update === 'function') {
+            other.update(newLoc, newLangs, newTz, newLayout, newLat, newLon, seen);
+          }
+        }
       }
     };
 
     function makeNative(fn, name, length = 0) {
+      const method = ({
+        [name](...args) {
+          return fn.apply(this, args);
+        }
+      })[name];
       try {
-        Object.defineProperty(fn, 'name', { value: name, configurable: true });
-        Object.defineProperty(fn, 'length', { value: length, configurable: true });
-        customToStrings.set(fn, 'function ' + name + '() { [native code] }');
+        Object.defineProperty(method, 'name', { value: name, writable: false, enumerable: false, configurable: true });
+        Object.defineProperty(method, 'length', { value: length, writable: false, enumerable: false, configurable: true });
+        customToStrings.set(method, 'function ' + name + '() { [native code] }');
       } catch (e) {}
-      return fn;
+      return method;
     }
 
     const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -438,20 +486,40 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
     function patchWindow(win, isTop) {
       if (!win || (typeof win !== 'object' && typeof win !== 'function')) return;
       if (patchedWindows.has(win)) return;
+
+      try {
+        if (win.Function && win.Function.prototype && typeof win.Function.prototype.toString === 'function') {
+          const otherState = win.Function.prototype.toString.call(STATE_SYM);
+          if (otherState && typeof otherState.update === 'function' && otherState.customToStrings) {
+            if (otherState !== internalState) {
+              linkedStates.add(otherState);
+              if (otherState.linkedStates) otherState.linkedStates.add(internalState);
+              otherState.update(currentLocale, currentLanguages, currentTimezone, currentLayout, currentLat, currentLon);
+            }
+            patchedWindows.add(win);
+            return;
+          }
+        }
+      } catch (e) {}
+
       patchedWindows.add(win);
 
-      // 1. Stealth Function.prototype.toString Masking
+      // 1. Stealth Function.prototype.toString Masking (concise method: no .prototype property, strict mode unboxed Symbol)
       try {
         const FnProto = (win.Function && win.Function.prototype) || (isTop ? Function.prototype : null);
         if (FnProto && FnProto.toString) {
           const origToString = FnProto.toString;
-          const stealthToString = function toString() {
-            if (this === STATE_SYM) return internalState;
-            if (customToStrings.has(this)) return customToStrings.get(this);
-            return origToString.call(this);
-          };
-          Object.defineProperty(stealthToString, 'name', { value: 'toString', configurable: true });
-          Object.defineProperty(stealthToString, 'length', { value: 0, configurable: true });
+          const stealthToString = ({
+            toString() {
+              'use strict';
+              if (this === STATE_SYM) return internalState;
+              const masked = internalState.getCustomToString(this);
+              if (masked !== undefined) return masked;
+              return origToString.call(this);
+            }
+          }).toString;
+          Object.defineProperty(stealthToString, 'name', { value: 'toString', writable: false, enumerable: false, configurable: true });
+          Object.defineProperty(stealthToString, 'length', { value: 0, writable: false, enumerable: false, configurable: true });
           customToStrings.set(stealthToString, 'function toString() { [native code] }');
           Object.defineProperty(FnProto, 'toString', {
             value: stealthToString,
@@ -462,13 +530,21 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
         }
       } catch (e) {}
 
-      // 2. Spoof Navigator.prototype.language & languages
+      // 2. Spoof Navigator.prototype & WorkerNavigator.prototype language & languages
       try {
-        const NavCtor = win.Navigator || (isTop && typeof Navigator !== 'undefined' ? Navigator : null);
         const navInst = win.navigator || (isTop && typeof navigator !== 'undefined' ? navigator : null);
-        if (NavCtor && NavCtor.prototype) {
-          const origLangDesc = Object.getOwnPropertyDescriptor(NavCtor.prototype, 'language');
-          const origLangsDesc = Object.getOwnPropertyDescriptor(NavCtor.prototype, 'languages');
+        const NavCtor =
+          win.Navigator ||
+          win.WorkerNavigator ||
+          (isTop && typeof Navigator !== 'undefined' ? Navigator : null) ||
+          (isTop && typeof WorkerNavigator !== 'undefined' ? WorkerNavigator : null);
+        const navProto =
+          (NavCtor && NavCtor.prototype) ||
+          (navInst ? Object.getPrototypeOf(navInst) : null);
+
+        if (navProto) {
+          const origLangDesc = Object.getOwnPropertyDescriptor(navProto, 'language');
+          const origLangsDesc = Object.getOwnPropertyDescriptor(navProto, 'languages');
           if (navInst) {
             try { delete navInst.language; } catch (e) {}
             try { delete navInst.languages; } catch (e) {}
@@ -484,26 +560,19 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
             return origLangsDesc && origLangsDesc.get ? origLangsDesc.get.call(this) : Object.freeze(['en-US', 'en']);
           }, 'get languages', 0);
 
-          Object.defineProperty(NavCtor.prototype, 'language', {
+          Object.defineProperty(navProto, 'language', {
             get: getLanguage,
             set: undefined,
             enumerable: true,
             configurable: true,
           });
 
-          Object.defineProperty(NavCtor.prototype, 'languages', {
+          Object.defineProperty(navProto, 'languages', {
             get: getLanguages,
             set: undefined,
             enumerable: true,
             configurable: true,
           });
-        }
-
-        if (navInst && currentLocale && navInst.language !== currentLocale) {
-          const getLang = makeNative(() => currentLocale, 'get language', 0);
-          const getLangs = makeNative(() => Object.freeze([...(currentLanguages || [currentLocale])]), 'get languages', 0);
-          Object.defineProperty(navInst, 'language', { get: getLang, configurable: true, enumerable: true });
-          Object.defineProperty(navInst, 'languages', { get: getLangs, configurable: true, enumerable: true });
         }
       } catch (e) {}
 
@@ -535,7 +604,7 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
               const spoofedDTFResolved = makeNative(function () {
                 const res = origDTFResolved.call(this);
                 if (res && typeof res === 'object') {
-                  if (currentLocale && !explicitLocaleDTFs.has(this)) {
+                  if (currentLocale && !explicitLocaleObjs.has(this)) {
                     res.locale = currentLocale;
                   }
                   if (currentTimezone && !explicitTzDTFs.has(this)) {
@@ -555,7 +624,7 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
             const markExplicitOptions = (inst, args) => {
               if (!inst || (typeof inst !== 'object' && typeof inst !== 'function')) return;
               if (args.length > 0 && args[0] !== undefined) {
-                explicitLocaleDTFs.add(inst);
+                explicitLocaleObjs.add(inst);
               }
               if (args.length > 1 && args[1] != null && typeof args[1] === 'object' && args[1].timeZone !== undefined) {
                 explicitTzDTFs.add(inst);
@@ -599,22 +668,88 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
           }
 
           ['NumberFormat', 'Collator', 'PluralRules', 'RelativeTimeFormat', 'ListFormat', 'Segmenter'].forEach((api) => {
-            if (intlObj[api] && intlObj[api].prototype && intlObj[api].prototype.resolvedOptions) {
-              const origResolved = intlObj[api].prototype.resolvedOptions;
-              const spoofedResolved = makeNative(function () {
-                const res = origResolved.call(this);
-                if (res && typeof res === 'object' && currentLocale) {
-                  res.locale = currentLocale;
+            const OrigCtor = intlObj[api];
+            if (OrigCtor && OrigCtor.prototype) {
+              if (OrigCtor.prototype.resolvedOptions) {
+                const origResolved = OrigCtor.prototype.resolvedOptions;
+                const spoofedResolved = makeNative(function () {
+                  const res = origResolved.call(this);
+                  if (res && typeof res === 'object' && currentLocale && !explicitLocaleObjs.has(this)) {
+                    res.locale = currentLocale;
+                  }
+                  return res;
+                }, 'resolvedOptions', 0);
+                Object.defineProperty(OrigCtor.prototype, 'resolvedOptions', {
+                  value: spoofedResolved,
+                  writable: true,
+                  enumerable: false,
+                  configurable: true,
+                });
+              }
+
+              const markExplicitLocale = (inst, args) => {
+                if (inst && (typeof inst === 'object' || typeof inst === 'function') && args.length > 0 && args[0] !== undefined) {
+                  explicitLocaleObjs.add(inst);
                 }
-                return res;
-              }, 'resolvedOptions', 0);
-              Object.defineProperty(intlObj[api].prototype, 'resolvedOptions', {
-                value: spoofedResolved,
-                writable: true,
-                enumerable: false,
-                configurable: true,
+              };
+
+              const SpoofedIntlCtor = new Proxy(OrigCtor, {
+                construct(target, args, newTarget) {
+                  const effArgs = [...args];
+                  if (effArgs[0] === undefined && currentLocale) {
+                    effArgs[0] = currentLocale;
+                  }
+                  const actualTarget = newTarget === SpoofedIntlCtor ? target : newTarget;
+                  const inst = Reflect.construct(target, effArgs, actualTarget);
+                  markExplicitLocale(inst, args);
+                  return inst;
+                },
+                apply(target, thisArg, args) {
+                  const effArgs = [...args];
+                  if (effArgs[0] === undefined && currentLocale) {
+                    effArgs[0] = currentLocale;
+                  }
+                  const inst = target.apply(thisArg, effArgs);
+                  markExplicitLocale(inst, args);
+                  return inst;
+                },
               });
+              customToStrings.set(SpoofedIntlCtor, 'function ' + api + '() { [native code] }');
+              try {
+                Object.defineProperty(OrigCtor.prototype, 'constructor', {
+                  value: SpoofedIntlCtor,
+                  writable: true,
+                  enumerable: false,
+                  configurable: true,
+                });
+              } catch (e) {}
+              try {
+                Object.defineProperty(intlObj, api, {
+                  value: SpoofedIntlCtor,
+                  writable: true,
+                  enumerable: false,
+                  configurable: true,
+                });
+              } catch (e) {}
             }
+          });
+        }
+      } catch (e) {}
+
+      // Patch Number.prototype.toLocaleString to match default spoofed locale
+      try {
+        const NumCtor = win.Number || (isTop && typeof Number !== 'undefined' ? Number : null);
+        if (NumCtor && NumCtor.prototype && NumCtor.prototype.toLocaleString) {
+          const origNumToLocale = NumCtor.prototype.toLocaleString;
+          const spoofedNumToLocale = makeNative(function (locales, options) {
+            const effLoc = locales !== undefined ? locales : (currentLocale || undefined);
+            return origNumToLocale.call(this, effLoc, options);
+          }, 'toLocaleString', 0);
+          Object.defineProperty(NumCtor.prototype, 'toLocaleString', {
+            value: spoofedNumToLocale,
+            writable: true,
+            enumerable: false,
+            configurable: true,
           });
         }
       } catch (e) {}
@@ -625,6 +760,7 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
         if (OrigDate && OrigDate.prototype) {
           const OrigDateProto = OrigDate.prototype;
           const origGetTime = OrigDateProto.getTime;
+          const origSetTime = OrigDateProto.setTime;
           const origGetUTCMs = OrigDateProto.getUTCMilliseconds;
           const origSetUTCFullYear = OrigDateProto.setUTCFullYear;
           const origGetTimezoneOffset = OrigDateProto.getTimezoneOffset;
@@ -635,18 +771,33 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
           const origToLocaleDateString = OrigDateProto.toLocaleDateString;
           const origToLocaleTimeString = OrigDateProto.toLocaleTimeString;
           const origGetFullYear = OrigDateProto.getFullYear;
+          const origGetYear = OrigDateProto.getYear;
           const origGetMonth = OrigDateProto.getMonth;
           const origGetDate = OrigDateProto.getDate;
           const origGetDay = OrigDateProto.getDay;
           const origGetHours = OrigDateProto.getHours;
           const origGetMinutes = OrigDateProto.getMinutes;
           const origGetSeconds = OrigDateProto.getSeconds;
+          const origSetMilliseconds = OrigDateProto.setMilliseconds;
+          const origSetSeconds = OrigDateProto.setSeconds;
+          const origSetMinutes = OrigDateProto.setMinutes;
+          const origSetHours = OrigDateProto.setHours;
+          const origSetDate = OrigDateProto.setDate;
+          const origSetMonth = OrigDateProto.setMonth;
+          const origSetFullYear = OrigDateProto.setFullYear;
+          const origSetYear = OrigDateProto.setYear;
           const origDateParse = OrigDate.parse;
 
           const getZonedParts = (ms) => {
             if (!currentTimezone || !tzFormatter || Number.isNaN(ms)) return null;
             const d = new OrigDate(ms);
-            const parts = tzFormatter.formatToParts(d);
+            if (Number.isNaN(origGetTime.call(d))) return null;
+            let parts;
+            try {
+              parts = tzFormatter.formatToParts(d);
+            } catch (e) {
+              return null;
+            }
             let weekdayShort = 'Thu', monthShort = 'Jan', dayPadded = '01', yearStr = '1970';
             let hourStr = '00', minutePadded = '00', secondPadded = '00', tzName = currentTimezone;
             let era = 'AD';
@@ -697,6 +848,33 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
             };
           };
 
+          const localFieldsToMs = (year, month, day, hour, minute, second, msPart) => {
+            if (
+              Number.isNaN(year) ||
+              Number.isNaN(month) ||
+              Number.isNaN(day) ||
+              Number.isNaN(hour) ||
+              Number.isNaN(minute) ||
+              Number.isNaN(second) ||
+              Number.isNaN(msPart)
+            ) {
+              return NaN;
+            }
+            let rawUtc = OrigDate.UTC(year, month, day, hour, minute, second, msPart);
+            const yrInt = Math.trunc(year);
+            if (yrInt >= 0 && yrInt < 100) {
+              const fixD = new OrigDate(rawUtc);
+              origSetUTCFullYear.call(fixD, yrInt);
+              rawUtc = origGetTime.call(fixD);
+            }
+            if (Number.isNaN(rawUtc)) return NaN;
+            const zp1 = getZonedParts(rawUtc);
+            if (!zp1) return NaN;
+            const guessMs = rawUtc + zp1.offsetMin * 60000;
+            const zp2 = getZonedParts(guessMs);
+            return rawUtc + (zp2 ? zp2.offsetMin : zp1.offsetMin) * 60000;
+          };
+
           const defineDateProtoMethod = (name, length, fn) => {
             const wrapped = makeNative(fn, name, length);
             Object.defineProperty(OrigDateProto, name, {
@@ -707,14 +885,14 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
             });
           };
 
-          defineDateProtoMethod('getTimezoneOffset', 0, function getTimezoneOffset() {
+          defineDateProtoMethod('getTimezoneOffset', 0, function () {
             const ms = origGetTime.call(this);
             if (Number.isNaN(ms)) return NaN;
             const zp = getZonedParts(ms);
             return zp ? zp.offsetMin : origGetTimezoneOffset.call(this);
           });
 
-          defineDateProtoMethod('toDateString', 0, function toDateString() {
+          defineDateProtoMethod('toDateString', 0, function () {
             const ms = origGetTime.call(this);
             if (Number.isNaN(ms)) return 'Invalid Date';
             const zp = getZonedParts(ms);
@@ -723,7 +901,7 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
             return zp.weekdayShort + ' ' + zp.monthShort + ' ' + zp.dayPadded + ' ' + yStr;
           });
 
-          defineDateProtoMethod('toTimeString', 0, function toTimeString() {
+          defineDateProtoMethod('toTimeString', 0, function () {
             const ms = origGetTime.call(this);
             if (Number.isNaN(ms)) return 'Invalid Date';
             const zp = getZonedParts(ms);
@@ -736,7 +914,7 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
             return zp.hourPadded + ':' + zp.minutePadded + ':' + zp.secondPadded + ' GMT' + sign + offH + offM + ' (' + zp.tzName + ')';
           });
 
-          defineDateProtoMethod('toString', 0, function toString() {
+          defineDateProtoMethod('toString', 0, function () {
             const ms = origGetTime.call(this);
             if (Number.isNaN(ms)) return 'Invalid Date';
             const zp = getZonedParts(ms);
@@ -750,76 +928,239 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
             return zp.weekdayShort + ' ' + zp.monthShort + ' ' + zp.dayPadded + ' ' + yStr + ' ' + zp.hourPadded + ':' + zp.minutePadded + ':' + zp.secondPadded + ' GMT' + sign + offH + offM + ' (' + zp.tzName + ')';
           });
 
-          defineDateProtoMethod('getFullYear', 0, function getFullYear() {
+          defineDateProtoMethod('getFullYear', 0, function () {
             const ms = origGetTime.call(this);
             if (Number.isNaN(ms)) return NaN;
             const zp = getZonedParts(ms);
             return zp ? zp.year : origGetFullYear.call(this);
           });
 
-          defineDateProtoMethod('getMonth', 0, function getMonth() {
+          if (origGetYear) {
+            defineDateProtoMethod('getYear', 0, function () {
+              const ms = origGetTime.call(this);
+              if (Number.isNaN(ms)) return NaN;
+              const zp = getZonedParts(ms);
+              return zp ? zp.year - 1900 : origGetYear.call(this);
+            });
+          }
+
+          defineDateProtoMethod('getMonth', 0, function () {
             const ms = origGetTime.call(this);
             if (Number.isNaN(ms)) return NaN;
             const zp = getZonedParts(ms);
             return zp ? zp.monthIndex : origGetMonth.call(this);
           });
 
-          defineDateProtoMethod('getDate', 0, function getDate() {
+          defineDateProtoMethod('getDate', 0, function () {
             const ms = origGetTime.call(this);
             if (Number.isNaN(ms)) return NaN;
             const zp = getZonedParts(ms);
             return zp ? zp.day : origGetDate.call(this);
           });
 
-          defineDateProtoMethod('getDay', 0, function getDay() {
+          defineDateProtoMethod('getDay', 0, function () {
             const ms = origGetTime.call(this);
             if (Number.isNaN(ms)) return NaN;
             const zp = getZonedParts(ms);
             return zp ? zp.weekdayIndex : origGetDay.call(this);
           });
 
-          defineDateProtoMethod('getHours', 0, function getHours() {
+          defineDateProtoMethod('getHours', 0, function () {
             const ms = origGetTime.call(this);
             if (Number.isNaN(ms)) return NaN;
             const zp = getZonedParts(ms);
             return zp ? zp.hour : origGetHours.call(this);
           });
 
-          defineDateProtoMethod('getMinutes', 0, function getMinutes() {
+          defineDateProtoMethod('getMinutes', 0, function () {
             const ms = origGetTime.call(this);
             if (Number.isNaN(ms)) return NaN;
             const zp = getZonedParts(ms);
             return zp ? zp.minute : origGetMinutes.call(this);
           });
 
-          defineDateProtoMethod('getSeconds', 0, function getSeconds() {
+          defineDateProtoMethod('getSeconds', 0, function () {
             const ms = origGetTime.call(this);
             if (Number.isNaN(ms)) return NaN;
             const zp = getZonedParts(ms);
             return zp ? zp.second : origGetSeconds.call(this);
           });
 
+          if (origSetMilliseconds) {
+            defineDateProtoMethod('setMilliseconds', 1, function (msVal) {
+              const ms = origGetTime.call(this);
+              const m = Number(msVal);
+              if (!currentTimezone || !tzFormatter || Number.isNaN(ms)) {
+                return origSetMilliseconds.apply(this, arguments);
+              }
+              const zp = getZonedParts(ms);
+              if (!zp) return origSetMilliseconds.apply(this, arguments);
+              return origSetTime.call(this, localFieldsToMs(zp.year, zp.monthIndex, zp.day, zp.hour, zp.minute, zp.second, m));
+            });
+          }
+
+          if (origSetSeconds) {
+            defineDateProtoMethod('setSeconds', 2, function (sec, msVal) {
+              const ms = origGetTime.call(this);
+              const s = Number(sec);
+              const m = arguments.length > 1 ? Number(msVal) : origGetUTCMs.call(this);
+              if (!currentTimezone || !tzFormatter || Number.isNaN(ms)) {
+                return origSetSeconds.apply(this, arguments);
+              }
+              const zp = getZonedParts(ms);
+              if (!zp) return origSetSeconds.apply(this, arguments);
+              return origSetTime.call(this, localFieldsToMs(zp.year, zp.monthIndex, zp.day, zp.hour, zp.minute, s, m));
+            });
+          }
+
+          if (origSetMinutes) {
+            defineDateProtoMethod('setMinutes', 3, function (min, sec, msVal) {
+              const ms = origGetTime.call(this);
+              const mn = Number(min);
+              const s = arguments.length > 1 ? Number(sec) : undefined;
+              const m = arguments.length > 2 ? Number(msVal) : undefined;
+              if (!currentTimezone || !tzFormatter || Number.isNaN(ms)) {
+                return origSetMinutes.apply(this, arguments);
+              }
+              const zp = getZonedParts(ms);
+              if (!zp) return origSetMinutes.apply(this, arguments);
+              return origSetTime.call(
+                this,
+                localFieldsToMs(
+                  zp.year,
+                  zp.monthIndex,
+                  zp.day,
+                  zp.hour,
+                  mn,
+                  arguments.length > 1 ? s : zp.second,
+                  arguments.length > 2 ? m : origGetUTCMs.call(this)
+                )
+              );
+            });
+          }
+
+          if (origSetHours) {
+            defineDateProtoMethod('setHours', 4, function (hour, min, sec, msVal) {
+              const ms = origGetTime.call(this);
+              const h = Number(hour);
+              const mn = arguments.length > 1 ? Number(min) : undefined;
+              const s = arguments.length > 2 ? Number(sec) : undefined;
+              const m = arguments.length > 3 ? Number(msVal) : undefined;
+              if (!currentTimezone || !tzFormatter || Number.isNaN(ms)) {
+                return origSetHours.apply(this, arguments);
+              }
+              const zp = getZonedParts(ms);
+              if (!zp) return origSetHours.apply(this, arguments);
+              return origSetTime.call(
+                this,
+                localFieldsToMs(
+                  zp.year,
+                  zp.monthIndex,
+                  zp.day,
+                  h,
+                  arguments.length > 1 ? mn : zp.minute,
+                  arguments.length > 2 ? s : zp.second,
+                  arguments.length > 3 ? m : origGetUTCMs.call(this)
+                )
+              );
+            });
+          }
+
+          if (origSetDate) {
+            defineDateProtoMethod('setDate', 1, function (dateVal) {
+              const ms = origGetTime.call(this);
+              const dt = Number(dateVal);
+              if (!currentTimezone || !tzFormatter || Number.isNaN(ms)) {
+                return origSetDate.apply(this, arguments);
+              }
+              const zp = getZonedParts(ms);
+              if (!zp) return origSetDate.apply(this, arguments);
+              return origSetTime.call(this, localFieldsToMs(zp.year, zp.monthIndex, dt, zp.hour, zp.minute, zp.second, origGetUTCMs.call(this)));
+            });
+          }
+
+          if (origSetMonth) {
+            defineDateProtoMethod('setMonth', 2, function (monthVal, dateVal) {
+              const ms = origGetTime.call(this);
+              const mo = Number(monthVal);
+              const dt = arguments.length > 1 ? Number(dateVal) : undefined;
+              if (!currentTimezone || !tzFormatter || Number.isNaN(ms)) {
+                return origSetMonth.apply(this, arguments);
+              }
+              const zp = getZonedParts(ms);
+              if (!zp) return origSetMonth.apply(this, arguments);
+              return origSetTime.call(
+                this,
+                localFieldsToMs(zp.year, mo, arguments.length > 1 ? dt : zp.day, zp.hour, zp.minute, zp.second, origGetUTCMs.call(this))
+              );
+            });
+          }
+
+          if (origSetFullYear) {
+            defineDateProtoMethod('setFullYear', 3, function (yearVal, monthVal, dateVal) {
+              const ms = origGetTime.call(this);
+              const yr = Number(yearVal);
+              const mo = arguments.length > 1 ? Number(monthVal) : undefined;
+              const dt = arguments.length > 2 ? Number(dateVal) : undefined;
+              if (!currentTimezone || !tzFormatter) {
+                return origSetFullYear.apply(this, arguments);
+              }
+              const zp = Number.isNaN(ms) ? { monthIndex: 0, day: 1, hour: 0, minute: 0, second: 0 } : getZonedParts(ms);
+              if (!zp) return origSetFullYear.apply(this, arguments);
+              const msPart = Number.isNaN(ms) ? 0 : origGetUTCMs.call(this);
+              return origSetTime.call(
+                this,
+                localFieldsToMs(
+                  yr,
+                  arguments.length > 1 ? mo : zp.monthIndex,
+                  arguments.length > 2 ? dt : zp.day,
+                  zp.hour,
+                  zp.minute,
+                  zp.second,
+                  msPart
+                )
+              );
+            });
+          }
+
+          if (origSetYear) {
+            defineDateProtoMethod('setYear', 1, function (yearVal) {
+              const ms = origGetTime.call(this);
+              const yNum = Number(yearVal);
+              if (!currentTimezone || !tzFormatter) {
+                return origSetYear.apply(this, arguments);
+              }
+              if (Number.isNaN(yNum)) return origSetTime.call(this, NaN);
+              const yrTrunc = Math.trunc(yNum);
+              const fullYr = yrTrunc >= 0 && yrTrunc <= 99 ? 1900 + yrTrunc : yNum;
+              const zp = Number.isNaN(ms) ? { monthIndex: 0, day: 1, hour: 0, minute: 0, second: 0 } : getZonedParts(ms);
+              if (!zp) return origSetYear.apply(this, arguments);
+              const msPart = Number.isNaN(ms) ? 0 : origGetUTCMs.call(this);
+              return origSetTime.call(this, localFieldsToMs(fullYr, zp.monthIndex, zp.day, zp.hour, zp.minute, zp.second, msPart));
+            });
+          }
+
           if (origToLocaleString) {
-            defineDateProtoMethod('toLocaleString', 0, function toLocaleString(locales, options) {
+            defineDateProtoMethod('toLocaleString', 0, function (locales, options) {
               const [l, o] = normalizeDTFArgs(locales, options);
               return origToLocaleString.call(this, l, o);
             });
           }
           if (origToLocaleDateString) {
-            defineDateProtoMethod('toLocaleDateString', 0, function toLocaleDateString(locales, options) {
+            defineDateProtoMethod('toLocaleDateString', 0, function (locales, options) {
               const [l, o] = normalizeDTFArgs(locales, options);
               return origToLocaleDateString.call(this, l, o);
             });
           }
           if (origToLocaleTimeString) {
-            defineDateProtoMethod('toLocaleTimeString', 0, function toLocaleTimeString(locales, options) {
+            defineDateProtoMethod('toLocaleTimeString', 0, function (locales, options) {
               const [l, o] = normalizeDTFArgs(locales, options);
               return origToLocaleTimeString.call(this, l, o);
             });
           }
 
           const hasExplicitZoneInString = (s) =>
-            /[zZ]$|[+-]\d{2}:?\d{2}|\b(?:GMT|UTC)\b|^\d{4}-\d{2}-\d{2}$/.test(s.trim());
+            /[zZ]$|[+-]\\d{2}:?\\d{2}(?::?\\d{2}(?:\\.\\d+)?)?$|\\b(?:GMT|UTC)\\b|^(?:\\d{4}|[+-]\\d{6})(?:-\\d{2}(?:-\\d{2})?)?$/.test(s.trim());
 
           const adjustParsedMs = (str) => {
             const rawMs = origDateParse.call(OrigDate, str);
@@ -834,7 +1175,7 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
             return rawMs + ((zp2 ? zp2.offsetMin : zp1.offsetMin) - hostOff) * 60000;
           };
 
-          const spoofedParse = makeNative(function parse(str) {
+          const spoofedParse = makeNative(function (str) {
             return adjustParsedMs(String(str));
           }, 'parse', 1);
 
@@ -900,7 +1241,7 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
       try {
         if (win.Temporal && win.Temporal.Now && typeof win.Temporal.Now.timeZoneId === 'function') {
           const origTzId = win.Temporal.Now.timeZoneId;
-          const spoofedTzId = makeNative(function timeZoneId() {
+          const spoofedTzId = makeNative(function () {
             return currentTimezone || origTzId.call(this);
           }, 'timeZoneId', 0);
           Object.defineProperty(win.Temporal.Now, 'timeZoneId', {
@@ -1096,9 +1437,132 @@ function applyCloaqSpoof(rawLocale, rawTimezone, rawLayout, rawLat, rawLon) {
           }
         }
       } catch (e) {}
+
+      // 9. Zero-Latency Web Worker & SharedWorker Bootstrap Pre-Shield (for inline blob: & data: workers spawned at 0.00ms)
+      try {
+        const OrigBlob = win.Blob || (isTop && typeof Blob !== 'undefined' ? Blob : null);
+        const OrigURL = win.URL || (isTop && typeof URL !== 'undefined' ? URL : null);
+        const origCreateObjectURL = OrigURL && typeof OrigURL.createObjectURL === 'function' ? OrigURL.createObjectURL : null;
+
+        if (OrigBlob && OrigURL && origCreateObjectURL) {
+          const SpoofedBlob = new Proxy(OrigBlob, {
+            construct(target, args, newTarget) {
+              const actualTarget = newTarget === SpoofedBlob ? target : newTarget;
+              const inst = Reflect.construct(target, args, actualTarget);
+              try {
+                if (Array.isArray(args[0])) {
+                  blobPartsMap.set(inst, { parts: args[0], options: args[1] });
+                }
+              } catch (e) {}
+              return inst;
+            }
+          });
+          customToStrings.set(SpoofedBlob, 'function Blob() { [native code] }');
+          try {
+            Object.defineProperty(OrigBlob.prototype, 'constructor', {
+              value: SpoofedBlob,
+              writable: true,
+              enumerable: false,
+              configurable: true,
+            });
+            Object.defineProperty(win, 'Blob', {
+              value: SpoofedBlob,
+              writable: true,
+              enumerable: false,
+              configurable: true,
+            });
+          } catch (e) {}
+
+          const spoofedCreateObjectURL = makeNative(function (obj) {
+            const url = origCreateObjectURL.apply(this, arguments);
+            try {
+              if (obj && typeof url === 'string' && blobPartsMap.has(obj)) {
+                blobUrlMap.set(url, obj);
+              }
+            } catch (e) {}
+            return url;
+          }, 'createObjectURL', 1);
+          Object.defineProperty(OrigURL, 'createObjectURL', {
+            value: spoofedCreateObjectURL,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+
+          const buildWorkerBootstrap = () =>
+            ';(' +
+            applyCloaqSpoof.toString() +
+            ')(' +
+            JSON.stringify(currentLocale) +
+            ',' +
+            JSON.stringify(currentTimezone) +
+            ',null,' +
+            JSON.stringify(currentLat) +
+            ',' +
+            JSON.stringify(currentLon) +
+            ');\\n';
+
+          const rewriteWorkerScriptUrl = (rawUrl, options) => {
+            if (!currentTimezone && !currentLocale && currentLat == null && currentLon == null) {
+              return rawUrl;
+            }
+            const urlStr = String(rawUrl);
+            const isModule = options && typeof options === 'object' && options.type === 'module';
+            const bootstrap = buildWorkerBootstrap();
+            const trackedBlob = blobUrlMap.get(urlStr);
+            if (trackedBlob && blobPartsMap.has(trackedBlob)) {
+              const entry = blobPartsMap.get(trackedBlob);
+              const patchedBlob = new OrigBlob([bootstrap, ...entry.parts], entry.options || { type: 'application/javascript' });
+              return origCreateObjectURL.call(OrigURL, patchedBlob);
+            }
+            if (!isModule && (urlStr.startsWith('blob:') || urlStr.startsWith('data:'))) {
+              const patchedBlob = new OrigBlob(
+                [bootstrap + 'importScripts(' + JSON.stringify(urlStr) + ');\\n'],
+                { type: 'application/javascript' }
+              );
+              return origCreateObjectURL.call(OrigURL, patchedBlob);
+            }
+            return rawUrl;
+          };
+
+          ['Worker', 'SharedWorker'].forEach((workerCtorName) => {
+            const OrigWorkerCtor = win[workerCtorName] || (isTop && typeof globalThis[workerCtorName] === 'function' ? globalThis[workerCtorName] : null);
+            if (OrigWorkerCtor && OrigWorkerCtor.prototype) {
+              const SpoofedWorkerCtor = new Proxy(OrigWorkerCtor, {
+                construct(target, args, newTarget) {
+                  const actualTarget = newTarget === SpoofedWorkerCtor ? target : newTarget;
+                  if (args.length > 0 && args[0] != null) {
+                    try {
+                      const rewritten = rewriteWorkerScriptUrl(args[0], args[1]);
+                      const nextArgs = [...args];
+                      nextArgs[0] = rewritten;
+                      return Reflect.construct(target, nextArgs, actualTarget);
+                    } catch (e) {}
+                  }
+                  return Reflect.construct(target, args, actualTarget);
+                }
+              });
+              customToStrings.set(SpoofedWorkerCtor, 'function ' + workerCtorName + '() { [native code] }');
+              try {
+                Object.defineProperty(OrigWorkerCtor.prototype, 'constructor', {
+                  value: SpoofedWorkerCtor,
+                  writable: true,
+                  enumerable: false,
+                  configurable: true,
+                });
+                Object.defineProperty(win, workerCtorName, {
+                  value: SpoofedWorkerCtor,
+                  writable: true,
+                  enumerable: false,
+                  configurable: true,
+                });
+              } catch (e) {}
+            }
+          });
+        }
+      } catch (e) {}
     }
 
-    const rootWin = typeof window !== 'undefined' ? window : globalThis;
     patchWindow(rootWin, true);
   } catch (err) {}
 }
@@ -1177,8 +1641,8 @@ export const generateContentSpoofScript = () => {
       locale = LOCALE_LIST[locIndex];
     } else if (locIndex === 254) {
       let customLoc = '';
-      for (let c = 0; c < 7; c++) {
-        const code = readInt(62 + c * 8, 8);
+      for (let c = 0; c < 14; c++) {
+        const code = readInt(62 + c * 7, 7);
         if (code === 0) break;
         customLoc += String.fromCharCode(code);
       }
@@ -1203,3 +1667,4 @@ export const generateContentSpoofScript = () => {
 })();
 `
 }
+

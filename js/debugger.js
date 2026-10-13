@@ -7,15 +7,25 @@ import {
 const SHIELD_SCRIPT_ID = 'cloaq-main-shield'
 const attachedTabs = new Set()
 const tabAppliedTimezone = new Map()
+const tabInFlightTimezone = new Map()
+const tabRegisteredScript = new Map()
 const pendingAttachTimers = new Map()
+const inFlightAttach = new Map()
 let shieldSyncQueue = Promise.resolve()
+
+const clearTabTracking = (tabId) => {
+  attachedTabs.delete(tabId)
+  tabAppliedTimezone.delete(tabId)
+  tabInFlightTimezone.delete(tabId)
+  tabRegisteredScript.delete(tabId)
+  inFlightAttach.delete(tabId)
+}
 
 if (typeof chrome !== 'undefined' && chrome.debugger) {
   if (chrome.debugger.onDetach) {
     chrome.debugger.onDetach.addListener((source) => {
       if (source?.tabId) {
-        attachedTabs.delete(source.tabId)
-        tabAppliedTimezone.delete(source.tabId)
+        clearTabTracking(source.tabId)
       }
     })
   }
@@ -40,6 +50,8 @@ const clearPendingRetry = (tabId) => {
     pendingAttachTimers.delete(tabId)
   }
 }
+
+const normalizeScriptPath = (p) => String(p || '').replace(/^\/+/, '')
 
 export const syncContentScriptShield = (timezone, locale, lat, lon) => {
   if (typeof chrome === 'undefined' || !chrome.scripting) {
@@ -93,7 +105,9 @@ export const syncContentScriptShield = (timezone, locale, lat, lon) => {
         const currentJs = existing[0].js || []
         const isSame =
           currentJs.length === jsFiles.length &&
-          currentJs.every((f, idx) => f === jsFiles[idx])
+          currentJs.every(
+            (f, idx) => normalizeScriptPath(f) === normalizeScriptPath(jsFiles[idx])
+          )
         if (isSame) return
 
         try {
@@ -162,6 +176,16 @@ export const injectImmediateMainWorldSpoof = (
 const applyTimezoneViaCdp = (tabId, timezone) => {
   if (!timezone) return
 
+  const prevTz = tabAppliedTimezone.get(tabId)
+  const inFlightTz = tabInFlightTimezone.get(tabId)
+
+  // Avoid re-sending identical timezone override during same navigation (prevents mid-load reset race)
+  if (prevTz === timezone || inFlightTz === timezone) {
+    return
+  }
+
+  tabInFlightTimezone.set(tabId, timezone)
+
   const setTz = () => {
     chrome.debugger.sendCommand(
       { tabId },
@@ -170,6 +194,7 @@ const applyTimezoneViaCdp = (tabId, timezone) => {
       () => {
         const err = chrome.runtime.lastError
         if (!err) {
+          tabInFlightTimezone.delete(tabId)
           tabAppliedTimezone.set(tabId, timezone)
           return
         }
@@ -187,27 +212,31 @@ const applyTimezoneViaCdp = (tabId, timezone) => {
                   'Emulation.setTimezoneOverride',
                   { timezoneId: timezone },
                   () => {
+                    tabInFlightTimezone.delete(tabId)
                     if (!chrome.runtime.lastError) {
                       tabAppliedTimezone.set(tabId, timezone)
                     }
                   }
                 )
+              } else {
+                tabInFlightTimezone.delete(tabId)
               }
             }
           )
-        } else if (
-          msg.includes('not attached') ||
-          msg.includes('Detached') ||
-          msg.includes('No target')
-        ) {
-          attachedTabs.delete(tabId)
-          tabAppliedTimezone.delete(tabId)
+        } else {
+          tabInFlightTimezone.delete(tabId)
+          if (
+            msg.includes('not attached') ||
+            msg.includes('Detached') ||
+            msg.includes('No target')
+          ) {
+            clearTabTracking(tabId)
+          }
         }
       }
     )
   }
 
-  const prevTz = tabAppliedTimezone.get(tabId)
   if (prevTz && prevTz !== timezone) {
     chrome.debugger.sendCommand(
       { tabId },
@@ -276,19 +305,42 @@ const sendOverrides = (tabId, timezone, locale, lat, lon) => {
 
   if (timezone || locale || (lat != null && lon != null)) {
     const scriptSource = generateInjectionScript(locale, timezone, lat, lon)
+    const prevScript = tabRegisteredScript.get(tabId)
 
-    chrome.debugger.sendCommand({ tabId }, 'Page.enable', {}, () => {
-      if (!chrome.runtime.lastError) {
-        chrome.debugger.sendCommand(
-          { tabId },
-          'Page.addScriptToEvaluateOnNewDocument',
-          { source: scriptSource },
-          () => {
-            if (chrome.runtime.lastError) {}
+    if (!prevScript || prevScript.source !== scriptSource) {
+      tabRegisteredScript.set(tabId, {
+        source: scriptSource,
+        identifier: prevScript?.identifier || null,
+      })
+
+      chrome.debugger.sendCommand({ tabId }, 'Page.enable', {}, () => {
+        if (!chrome.runtime.lastError) {
+          if (prevScript?.identifier) {
+            chrome.debugger.sendCommand(
+              { tabId },
+              'Page.removeScriptToEvaluateOnNewDocument',
+              { identifier: prevScript.identifier },
+              () => {
+                if (chrome.runtime.lastError) {}
+              }
+            )
           }
-        )
-      }
-    })
+          chrome.debugger.sendCommand(
+            { tabId },
+            'Page.addScriptToEvaluateOnNewDocument',
+            { source: scriptSource },
+            (res) => {
+              if (!chrome.runtime.lastError && res?.identifier) {
+                const cur = tabRegisteredScript.get(tabId)
+                if (cur && cur.source === scriptSource) {
+                  cur.identifier = res.identifier
+                }
+              }
+            }
+          )
+        }
+      })
+    }
 
     // Evaluate directly without Runtime.enable for faster execution & anti-CDP stealth
     chrome.debugger.sendCommand(
@@ -307,23 +359,73 @@ const sendOverrides = (tabId, timezone, locale, lat, lon) => {
   }
 }
 
-const attachDebugger = (tabId, timezone, locale, lat, lon, retryCount = 0) => {
+const attachDebugger = (
+  tabId,
+  timezone,
+  locale,
+  lat,
+  lon,
+  retryCount = 0,
+  isCommitted = false
+) => {
   if (!timezone && !locale && (lat == null || lon == null)) return
 
   clearPendingRetry(tabId)
 
+  if (inFlightAttach.has(tabId)) {
+    const state = inFlightAttach.get(tabId)
+    state.timezone = timezone
+    state.locale = locale
+    state.lat = lat
+    state.lon = lon
+    if (isCommitted) state.committed = true
+    return
+  }
+
+  inFlightAttach.set(tabId, {
+    timezone,
+    locale,
+    lat,
+    lon,
+    committed: Boolean(isCommitted),
+  })
+
   chrome.debugger.attach({ tabId }, '1.3', () => {
     const err = chrome.runtime.lastError
+    const state = inFlightAttach.get(tabId) || {
+      timezone,
+      locale,
+      lat,
+      lon,
+      committed: false,
+    }
+    inFlightAttach.delete(tabId)
+
     if (!err || err.message?.includes('Another debugger is already attached')) {
       attachedTabs.add(tabId)
-      sendOverrides(tabId, timezone, locale, lat, lon)
-    } else if (retryCount < 6) {
-      // Tab may still be transitioning away from chrome://newtab; retry rapidly
-      const delays = [25, 50, 90, 150, 250, 400]
+      sendOverrides(
+        tabId,
+        state.timezone,
+        state.locale,
+        state.lat,
+        state.lon
+      )
+    } else if (retryCount < 7) {
+      // If commit arrived while attach was in flight on chrome://newtab, retry immediately
+      const delays = [15, 30, 60, 100, 160, 250, 400]
+      const delayMs = state.committed && retryCount === 0 ? 0 : delays[retryCount] || 100
       const timer = setTimeout(() => {
         pendingAttachTimers.delete(tabId)
-        attachDebugger(tabId, timezone, locale, lat, lon, retryCount + 1)
-      }, delays[retryCount] || 100)
+        attachDebugger(
+          tabId,
+          state.timezone,
+          state.locale,
+          state.lat,
+          state.lon,
+          retryCount + 1,
+          false
+        )
+      }, delayMs)
       pendingAttachTimers.set(tabId, timer)
     }
   })
@@ -346,7 +448,7 @@ export const ensureTabSpoofed = (
   if (attachedTabs.has(tabId)) {
     sendOverrides(tabId, timezone, locale, lat, lon)
   } else {
-    attachDebugger(tabId, timezone, locale, lat, lon, 0)
+    attachDebugger(tabId, timezone, locale, lat, lon, 0, isCommitted)
   }
 }
 
@@ -355,15 +457,34 @@ const detachDebugger = () => {
     clearTimeout(timer)
   }
   pendingAttachTimers.clear()
+  inFlightAttach.clear()
   attachedTabs.clear()
   tabAppliedTimezone.clear()
+  tabInFlightTimezone.clear()
+  tabRegisteredScript.clear()
+
+  const resetScript = generateInjectionScript(null, null, null, null)
 
   chrome.debugger.getTargets((tabs) => {
     if (chrome.runtime?.lastError || !Array.isArray(tabs)) return
     for (const tab of tabs) {
       if (tab.attached && tab.tabId) {
+        const tid = tab.tabId
         chrome.debugger.sendCommand(
-          { tabId: tab.tabId },
+          { tabId: tid },
+          'Runtime.evaluate',
+          {
+            expression: resetScript,
+            includeCommandLineAPI: false,
+            silent: true,
+            returnByValue: true,
+          },
+          () => {
+            if (chrome.runtime.lastError) {}
+          }
+        )
+        chrome.debugger.sendCommand(
+          { tabId: tid },
           'Emulation.clearGeolocationOverride',
           {},
           () => {
@@ -371,16 +492,24 @@ const detachDebugger = () => {
           }
         )
         chrome.debugger.sendCommand(
-          { tabId: tab.tabId },
-          'Emulation.setTimezoneOverride',
-          { timezoneId: '' },
+          { tabId: tid },
+          'Emulation.setLocaleOverride',
+          { locale: '' },
           () => {
             if (chrome.runtime.lastError) {}
           }
         )
-        chrome.debugger.detach({ tabId: tab.tabId }, () => {
-          if (chrome.runtime.lastError) {}
-        })
+        chrome.debugger.sendCommand(
+          { tabId: tid },
+          'Emulation.setTimezoneOverride',
+          { timezoneId: '' },
+          () => {
+            if (chrome.runtime.lastError) {}
+            chrome.debugger.detach({ tabId: tid }, () => {
+              if (chrome.runtime.lastError) {}
+            })
+          }
+        )
       }
     }
   })
@@ -431,8 +560,13 @@ const updateAllTabsWithCurrentOverrides = async () => {
 
   chrome.debugger.getTargets((targets) => {
     if (chrome.runtime?.lastError || !Array.isArray(targets)) return
+    const seenTabs = new Set()
     targets.forEach((target) => {
-      if (!target.tabId || !isSpoofableUrl(target.url)) return
+      if (!target.tabId || seenTabs.has(target.tabId)) return
+      if (target.type && target.type !== 'page') return
+      if (!isSpoofableUrl(target.url)) return
+      seenTabs.add(target.tabId)
+
       injectImmediateMainWorldSpoof(
         target.tabId,
         storage.timezone,
@@ -468,3 +602,4 @@ export {
   sendOverrides,
   updateAllTabsWithCurrentOverrides,
 }
+

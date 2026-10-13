@@ -200,10 +200,25 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   handleNavigation(details, true)
 })
 
+if (chrome.webNavigation?.onCreatedNavigationTarget) {
+  chrome.webNavigation.onCreatedNavigationTarget.addListener((details) => {
+    handleNavigation({ ...details, frameId: 0 }, false)
+  })
+}
+
+if (chrome.tabs?.onCreated) {
+  chrome.tabs.onCreated.addListener((tab) => {
+    if (!tab?.id) return
+    const url = tab.pendingUrl || tab.url
+    if (isIgnorableUrl(url)) return
+    handleNavigation({ tabId: tab.id, url, frameId: 0 }, false)
+  })
+}
+
 if (chrome.tabs?.onUpdated) {
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status !== 'loading') return
-    const url = changeInfo.url || tab?.url
+    const url = changeInfo.url || tab?.pendingUrl || tab?.url
     if (isIgnorableUrl(url)) return
     if (!cachedState.hydrated || cachedState.configuration === 'browserDefault') {
       return
@@ -225,6 +240,7 @@ if (chrome.tabs?.onUpdated) {
     }
   })
 }
+
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return
