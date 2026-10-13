@@ -70,6 +70,14 @@ const isIgnorableUrl = (url) => {
   )
 }
 
+const isChallengeUrl = (url) => {
+  if (!url) return false
+  return (
+    url.includes('challenges.cloudflare.com') ||
+    url.includes('/cdn-cgi/challenge-platform/')
+  )
+}
+
 const initializeExtensionState = () => {
   chrome.alarms.create('checkIpAlarm', { periodInMinutes: 1 })
 
@@ -137,7 +145,7 @@ const dispatchSpoofForNavigation = (details, isCommitted) => {
   if (cachedState.configuration === 'browserDefault') return
 
   if (details.frameId !== 0) {
-    if (isCommitted) {
+    if (isCommitted && !isChallengeUrl(details.url)) {
       injectImmediateMainWorldSpoof(
         details.tabId,
         cachedState.timezone,
@@ -162,7 +170,7 @@ const dispatchSpoofForNavigation = (details, isCommitted) => {
       cachedState.locale,
       cachedState.lat,
       cachedState.lon,
-      isCommitted
+      isCommitted && !isChallengeUrl(details.url)
     )
   }
 
@@ -235,7 +243,7 @@ if (chrome.tabs?.onUpdated) {
         cachedState.locale,
         cachedState.lat,
         cachedState.lon,
-        true
+        !isChallengeUrl(url)
       )
     }
   })

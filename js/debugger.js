@@ -1,6 +1,5 @@
 import {
   generateInjectionScript,
-  getAcceptLanguageHeader,
   encodeSpoofConfigToBits,
 } from './keyboardLayouts.js'
 
@@ -84,6 +83,11 @@ export const syncContentScriptShield = (timezone, locale, lat, lon) => {
       const scriptDef = {
         id: SHIELD_SCRIPT_ID,
         matches: ['<all_urls>'],
+        excludeMatches: [
+          '*://challenges.cloudflare.com/*',
+          '*://*.challenges.cloudflare.com/*',
+          '*://*/*/cdn-cgi/challenge-platform/*',
+        ],
         js: jsFiles,
         runAt: 'document_start',
         world: 'MAIN',
@@ -155,7 +159,7 @@ export const injectImmediateMainWorldSpoof = (
     const target =
       frameId != null
         ? { tabId, frameIds: [frameId] }
-        : { tabId, allFrames: true }
+        : { tabId, frameIds: [0] }
 
     chrome.scripting.executeScript(
       {
@@ -281,26 +285,6 @@ const sendOverrides = (tabId, timezone, locale, lat, lon) => {
         if (chrome.runtime.lastError) {}
       }
     )
-
-    const acceptLang = getAcceptLanguageHeader(locale)
-    if (acceptLang) {
-      chrome.debugger.sendCommand({ tabId }, 'Network.enable', {}, () => {
-        if (!chrome.runtime.lastError) {
-          chrome.debugger.sendCommand(
-            { tabId },
-            'Network.setExtraHTTPHeaders',
-            {
-              headers: {
-                'Accept-Language': acceptLang,
-              },
-            },
-            () => {
-              if (chrome.runtime.lastError) {}
-            }
-          )
-        }
-      })
-    }
   }
 
   if (timezone || locale || (lat != null && lon != null)) {

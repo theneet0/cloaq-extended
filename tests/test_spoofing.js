@@ -487,7 +487,7 @@ async function runTests() {
   assert.strictEqual(customDecoded.lon, 85.324)
   console.log('  PASS: Bit-Codec lossless encoding & decoding verified across all presets, modern zones, and 14-char locales.')
 
-  console.log('Test 8: Testing Zero-Latency MAIN-world contentSpoof.js & Dedicated Web Worker bootstrap pre-shield...')
+  console.log('Test 8: Testing Zero-Latency MAIN-world contentSpoof.js & native Worker/Blob preservation...')
   const preShieldContext = vm.createContext({})
   vm.runInContext(
     `
@@ -502,8 +502,6 @@ async function runTests() {
         cb({ coords: { latitude: 0, longitude: 0, accuracy: 100 } });
       }
     });
-    const blobStore = new Map();
-    let blobIdCounter = 0;
     class MockBlob {
       constructor(parts, options) {
         this.parts = parts;
@@ -512,16 +510,13 @@ async function runTests() {
     }
     const MockURL = {
       createObjectURL(blob) {
-        const u = 'blob:https://example.com/' + (++blobIdCounter);
-        blobStore.set(u, blob);
-        return u;
+        return 'blob:https://example.com/1';
       }
     };
     class MockWorker {
       constructor(scriptUrl, options) {
         this.scriptUrl = scriptUrl;
         this.options = options;
-        this.blob = blobStore.get(scriptUrl);
       }
     }
     globalThis.window = globalThis;
@@ -530,6 +525,9 @@ async function runTests() {
     globalThis.Blob = MockBlob;
     globalThis.URL = MockURL;
     globalThis.Worker = MockWorker;
+    globalThis.__OrigBlob = MockBlob;
+    globalThis.__OrigCreateObjectURL = MockURL.createObjectURL;
+    globalThis.__OrigWorker = MockWorker;
     `,
     preShieldContext
   )
@@ -559,31 +557,11 @@ async function runTests() {
   assert.strictEqual(geoCoords.latitude, 35.6895)
   assert.strictEqual(geoCoords.longitude, 139.6917)
 
-  // Verify inline Blob Web Worker spawned at t = 0.00ms receives bootstrap pre-shield & spoofs WorkerNavigator
-  const workerSource = vm.runInContext(
-    `(() => {
-      const b = new Blob(['globalThis.__workerTz = Intl.DateTimeFormat().resolvedOptions().timeZone; globalThis.__workerLang = navigator.language;'], { type: 'application/javascript' });
-      const u = URL.createObjectURL(b);
-      const w = new Worker(u);
-      return w.blob.parts.join('');
-    })()`,
-    preShieldContext
-  )
-  const workerVm = vm.createContext({})
-  vm.runInContext(
-    `
-    class WorkerNavigator {}
-    globalThis.WorkerNavigator = WorkerNavigator;
-    globalThis.navigator = Object.create(WorkerNavigator.prototype);
-    `,
-    workerVm
-  )
-  vm.runInContext(workerSource, workerVm)
-  assert.strictEqual(vm.runInContext(`__workerTz`, workerVm), 'Asia/Tokyo')
-  assert.strictEqual(vm.runInContext(`__workerLang`, workerVm), 'ja-JP')
-  assert.strictEqual(vm.runInContext(`navigator.hasOwnProperty('language')`, workerVm), false)
-  assert.strictEqual(vm.runInContext(`WorkerNavigator.prototype.hasOwnProperty('language')`, workerVm), true)
-  console.log('  PASS: Zero-Latency MAIN-world contentSpoof.js & Dedicated Web Worker pre-shield verified.')
+  // Verify Worker, Blob, and URL.createObjectURL are 100% untouched native references (prevents Cloudflare Turnstile worker-src blob: CSP error)
+  assert.strictEqual(vm.runInContext(`window.Blob === __OrigBlob`, preShieldContext), true)
+  assert.strictEqual(vm.runInContext(`window.URL.createObjectURL === __OrigCreateObjectURL`, preShieldContext), true)
+  assert.strictEqual(vm.runInContext(`window.Worker === __OrigWorker`, preShieldContext), true)
+  console.log('  PASS: Zero-Latency MAIN-world contentSpoof.js & native Worker/Blob preservation verified.')
 
   console.log('Test 9: Testing manifest.json validity...')
   const manifestRaw = fs.readFileSync(
@@ -592,7 +570,7 @@ async function runTests() {
   )
   const manifest = JSON.parse(manifestRaw)
   assert.strictEqual(manifest.manifest_version, 3)
-  assert.strictEqual(manifest.version, '1.3.4')
+  assert.strictEqual(manifest.version, '1.3.5')
   assert.ok(manifest.permissions.includes('declarativeNetRequest'))
   assert.ok(manifest.permissions.includes('alarms'))
   assert.ok(manifest.permissions.includes('storage'))
@@ -718,6 +696,10 @@ async function runTests() {
   assert.strictEqual(registeredScripts[0].runAt, 'document_start')
   assert.strictEqual(registeredScripts[0].allFrames, true)
   assert.strictEqual(registeredScripts[0].matchOriginAsFallback, true)
+  assert.ok(
+    Array.isArray(registeredScripts[0].excludeMatches) &&
+      registeredScripts[0].excludeMatches.includes('*://challenges.cloudflare.com/*')
+  )
   assert.strictEqual(
     registeredScripts[0].js[registeredScripts[0].js.length - 1],
     'js/contentSpoof.js'
@@ -735,6 +717,11 @@ async function runTests() {
       c.params.timezoneId === 'Europe/Berlin'
   ).length
   assert.strictEqual(berlinTzCallsBefore, 1, 'Should apply Emulation.setTimezoneOverride once retry succeeds')
+  assert.strictEqual(
+    cdpCommands.some((c) => c.method === 'Network.enable'),
+    false,
+    'Should not enable CDP Network domain (handled by declarativeNetRequest)'
+  )
 
   // Calling sendOverrides again with the SAME timezone during navigation must NOT re-send or reset Emulation.setTimezoneOverride
   sendOverrides(99, 'Europe/Berlin', 'de-DE', 52.52, 13.405)
@@ -833,7 +820,127 @@ async function runTests() {
   assert.strictEqual(mockStorageData.locale, 'de-DE')
   console.log('  PASS: ipManager.js mismatch recovery and instant hydration verified.')
 
-  console.log('\nAll 12 tests passed successfully!')
+  console.log('Test 13: Testing Cloudflare Turnstile compatibility, WebIDL Illegal invocation, stack sanitization, and C++ CDP auto-unwrapping...')
+  // 13a. Verify challenge frame guard exits immediately without touching globals
+  const cfContext = vm.createContext({
+    location: {
+      hostname: 'challenges.cloudflare.com',
+      pathname: '/cdn-cgi/challenge-platform/h/g/turnstile/f/av0/rch/123',
+    },
+  })
+  vm.runInContext(
+    `
+    globalThis.window = globalThis;
+    globalThis.__origDate = Date;
+    globalThis.__origDTF = Intl.DateTimeFormat;
+    globalThis.__origToString = Function.prototype.toString;
+    `,
+    cfContext
+  )
+  for (const b of tokyoBits) {
+    vm.runInContext(`(window.__cloaq_b=window.__cloaq_b||[]).push(${b});`, cfContext)
+  }
+  vm.runInContext(contentSpoofCode, cfContext)
+  assert.strictEqual(vm.runInContext(`'__cloaq_b' in window`, cfContext), false)
+  assert.strictEqual(vm.runInContext(`Date === __origDate`, cfContext), true)
+  assert.strictEqual(vm.runInContext(`Intl.DateTimeFormat === __origDTF`, cfContext), true)
+  assert.strictEqual(vm.runInContext(`Function.prototype.toString === __origToString`, cfContext), true)
+
+  // 13b. Verify WebIDL Illegal invocation on Navigator.prototype.language / languages & Keyboard.prototype.getLayoutMap
+  assert.strictEqual(
+    vm.runInContext(
+      `(() => { try { return Navigator.prototype.language; } catch (e) { return e instanceof TypeError && e.message.includes('Illegal invocation'); } })()`,
+      vmContext
+    ),
+    true
+  )
+  assert.strictEqual(
+    vm.runInContext(
+      `(() => { try { return Navigator.prototype.languages; } catch (e) { return e instanceof TypeError && e.message.includes('Illegal invocation'); } })()`,
+      vmContext
+    ),
+    true
+  )
+  assert.strictEqual(
+    vm.runInContext(
+      `(() => { try { navigator.keyboard.getLayoutMap.call({}); return false; } catch (e) { return e instanceof TypeError && e.message.includes('Illegal invocation'); } })()`,
+      vmContext
+    ),
+    true
+  )
+
+  // 13c. Verify Proxy-wrapped Function.prototype.toString parity with native functions & stack trace sanitization
+  assert.strictEqual(
+    vm.runInContext(
+      `Function.prototype.toString.call(new Proxy(navigator.keyboard.getLayoutMap, {}))`,
+      vmContext
+    ),
+    vm.runInContext(
+      `Function.prototype.toString.call(new Proxy(Math.sin, {}))`,
+      vmContext
+    )
+  )
+  assert.strictEqual(
+    vm.runInContext(
+      `(() => {
+        try {
+          Function.prototype.toString.call(null);
+          return false;
+        } catch (e) {
+          return !String(e.stack || '').includes('applyCloaqSpoof') && !String(e.stack || '').includes('contentSpoof.js');
+        }
+      })()`,
+      vmContext
+    ),
+    true
+  )
+
+  // 13d. Verify automatic unwrapping back to 100% native C++ Date & Intl when C++ CDP Emulation becomes active
+  const cdpSimContext = vm.createContext({})
+  vm.runInContext(
+    `
+    class MockNavigatorProto {}
+    const mockNavInstance = Object.create(MockNavigatorProto.prototype);
+    mockNavInstance.keyboard = {};
+    globalThis.window = globalThis;
+    globalThis.Navigator = MockNavigatorProto;
+    globalThis.navigator = mockNavInstance;
+    globalThis.__origDate = Date;
+    globalThis.__origDTF = Intl.DateTimeFormat;
+    globalThis.__origResolved = Intl.DateTimeFormat.prototype.resolvedOptions;
+    globalThis.__cdpTz = null;
+    globalThis.__cdpLoc = null;
+    Intl.DateTimeFormat.prototype.resolvedOptions = function () {
+      const res = globalThis.__origResolved.call(this);
+      if (globalThis.__cdpTz) res.timeZone = globalThis.__cdpTz;
+      if (globalThis.__cdpLoc) res.locale = globalThis.__cdpLoc;
+      return res;
+    };
+    `,
+    cdpSimContext
+  )
+  // Step 1: At 0.00ms before CDP Emulation lands, JS pre-shield wraps Date & Intl.DateTimeFormat
+  vm.runInContext(generateInjectionScript('de-DE', 'Europe/Berlin'), cdpSimContext)
+  assert.strictEqual(vm.runInContext(`Date !== __origDate`, cdpSimContext), true)
+  assert.strictEqual(vm.runInContext(`Intl.DateTimeFormat !== __origDTF`, cdpSimContext), true)
+  assert.strictEqual(vm.runInContext(`Intl.DateTimeFormat().resolvedOptions().timeZone`, cdpSimContext), 'Europe/Berlin')
+
+  // Step 2: Simulate C++ CDP Emulation.setTimezoneOverride & Emulation.setLocaleOverride landing
+  vm.runInContext(`globalThis.__cdpTz = 'Europe/Berlin'; globalThis.__cdpLoc = 'de-DE';`, cdpSimContext)
+  vm.runInContext(generateInjectionScript('de-DE', 'Europe/Berlin'), cdpSimContext)
+  assert.strictEqual(
+    vm.runInContext(`Date === __origDate`, cdpSimContext),
+    true,
+    'window.Date must unwrap back to 100% native C++ Date once CDP Emulation is active'
+  )
+  assert.strictEqual(
+    vm.runInContext(`Intl.DateTimeFormat === __origDTF`, cdpSimContext),
+    true,
+    'Intl.DateTimeFormat must unwrap back to 100% native C++ DateTimeFormat once CDP Emulation is active'
+  )
+  console.log('  PASS: Cloudflare Turnstile compatibility, WebIDL Illegal invocation, stack sanitization, and C++ CDP auto-unwrapping verified.')
+
+  console.log('\nAll 13 tests passed successfully!')
 }
 
 runTests().catch((err) => {
